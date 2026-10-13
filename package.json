@@ -1,0 +1,18 @@
+{
+  "name": "fractical-experiment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A shared, persistent world on the Mandelbrot coast.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.20.1"
+  }
+}

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#102d30" />
+    <meta
+      name="description"
+      content="A shared physical world on the Mandelbrot coast. Shrink to fit through an opening. Grow only when there is room."
+    />
+    <title>Fractical - a world inside a world</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.mjs"></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="wordmark" href="/" aria-label="Fractical home"
+        ><svg viewBox="0 0 36 36" aria-hidden="true">
+          <path
+            d="M30 20c0-9-8-15-16-11C4 14 5 29 16 30c8 1 14-6 10-12-3-5-10-5-12 0-2 4 2 8 5 5"
+          /></svg
+        >fractical<span class="wordmark-dot">.</span></a
+      >
+      <span class="edition">A SMALL EXPERIMENT IN SHARED INFINITY</span>
+      <div class="header-actions">
+        <button id="about-button" class="text-button">
+          The idea <span aria-hidden="true">↗</span></button
+        ><button id="invite-button" class="dark-button">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path
+              d="m8 12 4-4M7 14H5a4 4 0 0 1 0-8h3m4 0h3a4 4 0 0 1 0 8h-3"
+            /></svg
+          >Invite someone
+        </button>
+      </div>
+    </header>
+    <main class="workspace">
+      <aside class="fieldnotes">
+        <div class="intro">
+          <p class="eyebrow">
+            <span class="small-star">✳</span> THE MANDELBROT COAST
+          </p>
+          <h1>A world,<br />inside a <em>world.</em></h1>
+          <p class="lede">
+            Find an opening. Go smaller until you fit. See what you find
+            together.
+          </p>
+        </div>
+        <div class="room-label">
+          <span class="status-dot" id="status-dot"></span
+          ><span id="room-caption">EXPEDITION / COMMON</span
+          ><span class="connection" id="connection">connecting</span>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Field notes">
+          <button
+            role="tab"
+            id="places-tab"
+            aria-selected="true"
+            aria-controls="places-panel"
+            data-tab="places"
+          >
+            Discover</button
+          ><button
+            role="tab"
+            id="people-tab"
+            aria-selected="false"
+            aria-controls="people-panel"
+            data-tab="people"
+          >
+            Together <span id="people-count">1</span></button
+          ><button
+            role="tab"
+            id="blocks-tab"
+            aria-selected="false"
+            aria-controls="blocks-panel"
+            data-tab="blocks"
+          >
+            Build <span id="blocks-count">0</span>
+          </button>
+        </div>
+        <section
+          id="places-panel"
+          role="tabpanel"
+          aria-labelledby="places-tab"
+          class="tab-panel"
+        >
+          <p class="panel-intro">A few doors into the same world.</p>
+          <button id="passage-button" class="passage-start">
+            Try the opening →
+          </button>
+          <div id="places-list"></div>
+          <button id="atlas-button" class="atlas-button">
+            <span class="atlas-glyph" aria-hidden="true">◎</span
+            ><span
+              >See the whole world<small
+                >Step back to the beginning</small
+              ></span
+            ><span aria-hidden="true">↗</span>
+          </button>
+        </section>
+        <section
+          id="people-panel"
+          role="tabpanel"
+          aria-labelledby="people-tab"
+          class="tab-panel"
+          hidden
+        >
+          <p class="panel-intro">
+            Meet at their scale, or follow their footsteps.
+          </p>
+          <div id="people-list"></div>
+          <div class="profile-box">
+            <span class="profile-label">YOUR EXPLORER</span>
+            <p id="explorer-name" class="explorer-name">Explorer</p>
+            <div
+              id="color-options"
+              class="color-options"
+              aria-label="Explorer color"
+            ></div>
+          </div>
+          <button id="wave-button" class="outline-button">
+            Wave to the expedition <span aria-hidden="true">✺</span>
+          </button>
+        </section>
+        <section
+          id="blocks-panel"
+          role="tabpanel"
+          aria-labelledby="blocks-tab"
+          class="tab-panel"
+          hidden
+        >
+          <p class="panel-intro">
+            Start with a block. Make your own shape at this scale.
+          </p>
+          <div
+            id="material-options"
+            class="material-options"
+            role="group"
+            aria-label="Block material"
+          ></div>
+          <div class="build-tools" role="group" aria-label="Building tool">
+            <button id="place-mode-button" aria-pressed="false">
+              Place blocks
+            </button>
+            <button id="erase-mode-button" aria-pressed="false">
+              Remove mine
+            </button>
+          </div>
+          <p id="build-status" class="build-status" role="status">
+            Build at your scale. B starts or finishes.
+          </p>
+          <div id="blocks-list"></div>
+          <button id="build-from-list" class="outline-button">
+            Build with blocks <span aria-hidden="true">+</span>
+          </button>
+        </section>
+        <div class="sidebar-bottom">
+          <div class="field-rule">
+            <span>THE FIELD RULE</span>
+            <p>Go smaller. Leave a trace.<br />Bring someone back.</p>
+          </div>
+          <div class="sidebar-meta">
+            <span>EXPERIMENT 001</span
+            ><button id="room-button" class="text-button">
+              New expedition ↗
+            </button>
+          </div>
+        </div>
+      </aside>
+      <section
+        id="world"
+        class="world"
+        aria-label="Interactive shared fractal world"
+        tabindex="0"
+      >
+        <canvas id="terrain" aria-label="Mandelbrot terrain"></canvas
+        ><canvas id="entities" aria-hidden="true"></canvas>
+        <div class="world-grain" aria-hidden="true"></div>
+        <div class="world-top">
+          <div>
+            <p class="eyebrow light">YOU ARE HERE</p>
+            <h2 id="place-title">The narrowing passage</h2>
+            <p id="coordinate-label" class="coordinates">
+              −0.650000 + 0.250000i
+            </p>
+            <p id="body-state" class="body-state" role="status">
+              Solid rock. Your body needs room.
+            </p>
+          </div>
+          <div class="live-badge">
+            <span class="status-dot"></span
+            ><span id="live-caption">1 explorer here</span
+            ><span id="latency"></span>
+          </div>
+        </div>
+        <div id="follow-banner" class="follow-banner" hidden>
+          <span id="follow-caption">Following an explorer</span
+          ><button id="unfollow-button">Walk on your own ×</button>
+        </div>
+        <div id="build-banner" class="build-banner" hidden>
+          <div>
+            <button id="cycle-material" aria-label="Change block material">
+              Stone ▾
+            </button>
+            <button id="erase-short" aria-pressed="false">Remove</button>
+            <button id="finish-build">Done</button>
+          </div>
+          <p id="build-caption">Tap a cell to place</p>
+        </div>
+        <div class="compass" aria-hidden="true">
+          <span>N</span
+          ><svg viewBox="0 0 36 36">
+            <path d="M18 3v30M3 18h30" />
+            <path d="m18 7-4 11h8Z" />
+          </svg>
+        </div>
+        <div class="world-right">
+          <div class="scale-control">
+            <button
+              id="ascend-button"
+              aria-label="Grow when there is room"
+              title="Grow (Q)"
+            >
+              −
+            </button>
+            <div>
+              <span class="eyebrow light">DEPTH</span
+              ><strong id="depth-label">01.3</strong>
+            </div>
+            <button
+              id="descend-button"
+              aria-label="Shrink to a smaller scale"
+              title="Shrink (E)"
+            >
+              +
+            </button>
+          </div>
+          <div class="depth-track"><div id="depth-fill"></div></div>
+        </div>
+        <div class="world-bottom">
+          <div class="scale-readout">
+            <span id="magnification">2.4×</span>
+            <div class="scale-line" aria-hidden="true"></div>
+            <span>FROM THE SURFACE</span>
+          </div>
+          <div class="world-actions">
+            <button
+              id="home-button"
+              class="glass-button"
+              title="Return to the narrowing passage (H)"
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="m3 9 7-6 7 6v8H3Z" />
+                <path d="M8 17v-6h4v6" /></svg
+              ><span>Home</span></button
+            ><button id="build-button" class="build-button">
+              <span aria-hidden="true">+</span> Build blocks
+            </button>
+          </div>
+        </div>
+        <div id="intro-hint" class="intro-hint">
+          <span class="hint-icon" aria-hidden="true">✳</span>
+          <p>
+            <strong>Walk into the gap.</strong><br />The rock stops you. Hold
+            <kbd>E</kbd> to fit. <kbd>Q</kbd> grows when there is room.
+          </p>
+          <button id="dismiss-hint" aria-label="Dismiss introduction">×</button>
+        </div>
+        <div id="chat-bubbles" class="chat-bubbles" aria-live="polite"></div>
+        <div id="joystick" class="joystick" aria-label="Drag to walk">
+          <span></span>
+        </div>
+        <div id="render-notice" class="render-notice" hidden></div>
+        <div id="world-loading" class="world-loading">
+          <span class="loading-spiral">◎</span><span>Finding the coast…</span>
+        </div>
+      </section>
+      <aside class="conversation">
+        <div class="conversation-heading">
+          <div>
+            <span class="status-dot"></span><strong>Field signals</strong>
+          </div>
+          <button id="chat-toggle" aria-label="Collapse field signals">
+            −
+          </button>
+        </div>
+        <div id="chat-body">
+          <div
+            id="chat-messages"
+            class="chat-messages"
+            role="log"
+            aria-live="polite"
+          >
+            <p class="radio-intro">
+              Wave, ask someone to follow, or wait together. Choose a signal
+              below.
+            </p>
+          </div>
+          <div
+            id="signal-options"
+            class="signal-options"
+            role="group"
+            aria-label="Preset expedition signals"
+          ></div>
+        </div>
+      </aside>
+    </main>
+    <footer class="controls">
+      <span
+        ><kbd>W A S D</kbd> walk <i>/</i> <kbd>E</kbd> smaller <i>/</i>
+        <kbd>Q</kbd> grow <i>/</i> click a place to walk there</span
+      >
+      <div>
+        <button id="sound-button" class="text-button" aria-pressed="false">
+          Sound off</button
+        ><span id="render-mode">procedural terrain</span
+        ><button id="help-button" class="text-button">Controls ?</button>
+      </div>
+    </footer>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <dialog id="room-dialog" class="sheet-dialog">
+      <form id="room-form">
+        <p class="eyebrow">A SHARED EXPEDITION</p>
+        <h2>Who will you<br /><em>get lost with?</em></h2>
+        <p class="dialog-copy">
+          The terrain is always the same. An expedition has its own explorers,
+          radio, and persistent traces. Invite people with its link.
+        </p>
+        <label class="form-label" for="room-input">EXPEDITION NAME</label
+        ><input
+          id="room-input"
+          maxlength="40"
+          pattern="[a-z0-9][a-z0-9-]{0,39}"
+          placeholder="sunday-wanderers"
+          required
+        />
+        <p class="position-note">
+          Letters, numbers, and hyphens. Room names are public identifiers, not
+          passwords.
+        </p>
+        <div class="dialog-actions">
+          <button type="button" class="text-button" data-close="room-dialog">
+            Stay here</button
+          ><button class="dark-button" type="submit">Go together ↗</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="about-dialog" class="sheet-dialog about-dialog">
+      <p class="eyebrow">FRACTICAL / EXPERIMENT 001</p>
+      <h2>What if a world<br />never ran out<br />of <em>inside?</em></h2>
+      <p class="dialog-copy">
+        One mathematical coastline. Many scales. People leaving evidence that
+        they were here.
+      </p>
+      <div class="about-steps">
+        <p>
+          <span>01</span><strong>Fit into the detail.</strong> Your body
+          occupies space. Shrink to enter smaller openings. Grow where there is
+          room. Every location has a coordinate and a depth.
+        </p>
+        <p>
+          <span>02</span><strong>Find each other.</strong> Other explorers are
+          connected browsers. Meet at their scale, follow them, or send a preset
+          signal.
+        </p>
+        <p>
+          <span>03</span><strong>Make your own shape.</strong> Place individual
+          stone, glass, or glow blocks. Build walls, leave openings, and
+          assemble a place together. Blocks survive server restarts.
+        </p>
+      </div>
+      <p class="position-note">
+        This is a small playable experiment. The fractal is solid geometry.
+        Shrink to enter a gap. Grow only when the larger body fits. There are 32
+        explorers per expedition, and depth stops at 18 (262,144×). For now, a
+        construction uses square blocks. The blocks are solid too.
+      </p>
+      <button class="dark-button full-width" data-close="about-dialog">
+        Let's go somewhere ↗
+      </button>
+    </dialog>
+    <dialog id="help-dialog" class="sheet-dialog">
+      <p class="eyebrow">FIELD GUIDE</p>
+      <h2>A few ways<br />to <em>wander.</em></h2>
+      <dl class="key-list">
+        <div>
+          <dt><kbd>W A S D</kbd> / arrows</dt>
+          <dd>Walk. Hold Shift to travel faster.</dd>
+        </div>
+        <div>
+          <dt><kbd>E</kbd> / wheel up</dt>
+          <dd>Shrink your body to fit into smaller openings.</dd>
+        </div>
+        <div>
+          <dt><kbd>Q</kbd> / wheel down</dt>
+          <dd>
+            Grow in place. Solid terrain stops growth when there is no room.
+          </dd>
+        </div>
+        <div>
+          <dt>Click the terrain</dt>
+          <dd>
+            Walk to a point, stopping at rock. Double-click to shrink and walk
+            towards it.
+          </dd>
+        </div>
+        <div>
+          <dt><kbd>B</kbd></dt>
+          <dd>Start or finish building. Tap cells to place blocks.</dd>
+        </div>
+        <div>
+          <dt><kbd>1 2 3</kbd> / <kbd>R</kbd></dt>
+          <dd>Choose a material, or switch to removing your own blocks.</dd>
+        </div>
+        <div>
+          <dt><kbd>Space</kbd> / <kbd>Esc</kbd></dt>
+          <dd>Edit the selected cell, or finish building.</dd>
+        </div>
+        <div>
+          <dt><kbd>H</kbd></dt>
+          <dd>Return to clear ground at the narrowing passage.</dd>
+        </div>
+        <div>
+          <dt>Touch</dt>
+          <dd>Drag the walking pad. Use + and − for depth.</dd>
+        </div>
+      </dl>
+      <button class="dark-button full-width" data-close="help-dialog">
+        Back to the coast ↗
+      </button>
+    </dialog>
+    <dialog id="share-dialog" class="sheet-dialog">
+      <p class="eyebrow">MEET ME HERE</p>
+      <h2>A place worth<br /><em>sharing.</em></h2>
+      <p class="dialog-copy">
+        This link brings someone to your expedition, at your current place and
+        scale.
+      </p>
+      <input id="share-url" readonly aria-label="Expedition link" />
+      <p id="share-caveat" class="position-note"></p>
+      <div class="dialog-actions">
+        <button class="text-button" data-close="share-dialog">
+          Keep walking</button
+        ><button id="copy-share" class="dark-button">Copy link ↗</button>
+      </div>
+    </dialog>
+  </body>
+</html>
