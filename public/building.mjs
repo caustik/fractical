@@ -90,6 +90,120 @@ export function placementProblem(cell, player, players, blocks, terrain) {
     return "Leave room for the explorers.";
   return null;
 }
+
+// Intersect the time intervals in which the translating square overlaps each
+// axis. Checking the whole sweep prevents skipping even a much smaller block.
+function sweptRectangleOverlaps(from, to, obstacle) {
+  let enter = 0,
+    exit = 1;
+  const epsilon =
+    Math.min(from.maxX - from.minX, obstacle.maxX - obstacle.minX) * 1e-8;
+  for (const axis of ["X", "Y"]) {
+    const min = `min${axis}`,
+      max = `max${axis}`,
+      delta = to[min] - from[min];
+    if (!delta) {
+      if (
+        from[min] >= obstacle[max] - epsilon ||
+        from[max] <= obstacle[min] + epsilon
+      )
+        return false;
+      continue;
+    }
+    const a = (obstacle[min] + epsilon - from[max]) / delta,
+      b = (obstacle[max] - epsilon - from[min]) / delta;
+    enter = Math.max(enter, Math.min(a, b));
+    exit = Math.min(exit, Math.max(a, b));
+    if (enter >= exit) return false;
+  }
+  return enter < exit;
+}
+
+function sweptBodyOverlap(from, to, body) {
+  const dx = to.minX - from.minX,
+    dy = to.minY - from.minY,
+    times = [0, 1];
+  // Distance from the circle center to the square is piecewise quadratic.
+  // Split where its nearest edge changes, then minimize each interval exactly.
+  for (const [min, max, center, delta] of [
+    [from.minX, from.maxX, body.x, dx],
+    [from.minY, from.maxY, body.y, dy],
+  ]) {
+    if (!delta) continue;
+    for (const edge of [min, max]) {
+      const time = (center - edge) / delta;
+      if (time > 0 && time < 1) times.push(time);
+    }
+  }
+  times.sort((a, b) => a - b);
+  const radius = bodyRadiusAt(body.depth);
+  for (let i = 1; i < times.length; i++) {
+    const middle = (times[i - 1] + times[i]) / 2;
+    let squaredSpeed = 0,
+      projection = 0;
+    const distances = [];
+    for (const [min, max, center, delta] of [
+      [from.minX, from.maxX, body.x, dx],
+      [from.minY, from.maxY, body.y, dy],
+    ]) {
+      const edge =
+        center < min + delta * middle
+          ? min
+          : center > max + delta * middle
+            ? max
+            : null;
+      const offset = edge === null ? 0 : edge - center,
+        velocity = edge === null ? 0 : delta;
+      distances.push([offset, velocity]);
+      projection += offset * velocity;
+      squaredSpeed += velocity * velocity;
+    }
+    const time = squaredSpeed
+      ? clamp(-projection / squaredSpeed, times[i - 1], times[i])
+      : middle;
+    if (
+      distances.reduce(
+        (sum, [offset, velocity]) => sum + (offset + velocity * time) ** 2,
+        0,
+      ) <
+      radius * radius
+    )
+      return true;
+  }
+  return false;
+}
+
+export function movementProblem(block, cell, player, players, blocks, terrain) {
+  if (!validCell(cell)) return "Choose a cell inside the world.";
+  if (cell.depth !== block.depth)
+    return "Moving a square keeps its original size.";
+  if (!withinBuildReach(block, player) || !withinBuildReach(cell, player))
+    return "Walk closer. Move squares at their own scale.";
+  const others = blocks.filter((other) => other.id !== block.id);
+  const problem = placementProblem(cell, player, players, others, terrain);
+  if (problem) return problem;
+  const from = blockBounds(block),
+    to = blockBounds(cell),
+    sweep = {
+      minX: Math.min(from.minX, to.minX),
+      maxX: Math.max(from.maxX, to.maxX),
+      minY: Math.min(from.minY, to.minY),
+      maxY: Math.max(from.maxY, to.maxY),
+    };
+  if (
+    terrain.query(sweep, block.depth, (rock) =>
+      sweptRectangleOverlaps(from, to, rock),
+    ).length
+  )
+    return "The square's path crosses fractal rock.";
+  if (
+    others.some((other) => sweptRectangleOverlaps(from, to, blockBounds(other)))
+  )
+    return "Another block is in the square's path.";
+  if (players.some((body) => sweptBodyOverlap(from, to, body)))
+    return "Leave a clear path around the explorers.";
+  return null;
+}
 export function pickBlock(point, blocks) {
   return blocks.find((block) => {
     const b = blockBounds(block);

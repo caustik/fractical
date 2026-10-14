@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  readFile,
+  readdir,
+  writeFile,
+  unlink,
+  mkdir,
+} from "node:fs/promises";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { createFracticalServer } from "../server.mjs";
@@ -28,6 +36,16 @@ const place = (material = "stone", dx = 2, dy = 0) => {
 };
 const builder = (app, name, room = "test-expedition") =>
   explorer(app, name, room, BUILD_HOME);
+const moveSquare = (block, dx = 0, dy = 2, requestId = "move-square") => ({
+  type: "move-block",
+  id: block.id,
+  ix: block.ix + dx,
+  iy: block.iy + dy,
+  depth: block.depth,
+  from: { ix: block.ix, iy: block.iy, depth: block.depth },
+  requestId,
+});
+const buildCooldown = () => new Promise((resolve) => setTimeout(resolve, 140));
 
 const qaRoot = path.resolve(".qa");
 await (await import("node:fs/promises")).mkdir(qaRoot, { recursive: true });
@@ -513,6 +531,110 @@ test("a failed disk write never announces a block or leaves its reserved collide
   );
   assert.equal(
     (await readdir(dir)).some((file) => file.endsWith(".tmp")),
+    false,
+  );
+});
+
+test("square moves are shared, preserve identity and size, and survive a restart", async (t) => {
+  const { app, dir } = await setup(t);
+  const a = await builder(app, "Builder"),
+    b = await builder(app, "Observer");
+  a.send(place("glass"));
+  const original = (await a.wait((m) => m.type === "blocks")).blocks[0];
+  await buildCooldown();
+  const request = moveSquare(original);
+  a.send(request);
+  const shared = await b.wait(
+    (m) => m.type === "blocks" && m.blocks[0]?.iy === request.iy,
+  );
+  const moved = shared.blocks[0];
+  for (const key of ["id", "depth", "material", "created"])
+    assert.equal(moved[key], original[key]);
+  assert.equal(moved.owned, false);
+  assert.equal("owner" in moved, false);
+  const room = app.rooms.get("test-expedition");
+  assert.equal(room.collider.fits(blockPosition(original)), true);
+  assert.equal(room.collider.fits(blockPosition(moved)), false);
+  const stored = JSON.parse(
+    await readFile(path.join(dir, "test-expedition.json")),
+  );
+  assert.equal(stored.blocks[0].iy, request.iy);
+  await app.close();
+  const reloaded = await createFracticalServer({ port: 0, dataDir: dir });
+  t.after(() => reloaded.close());
+  const resumed = await explorer(reloaded, "Builder", "test-expedition", {
+    ...BUILD_HOME,
+    token: a.welcome.token,
+  });
+  assert.equal(resumed.welcome.blocks[0].id, original.id);
+  assert.equal(resumed.welcome.blocks[0].iy, request.iy);
+  assert.equal(resumed.welcome.blocks[0].owned, true);
+});
+
+test("moves reject foreign ownership, changed sources, resizing, distant targets, and buried explorers", async (t) => {
+  const { app } = await setup(t);
+  const a = await builder(app, "Builder"),
+    b = await builder(app, "Observer");
+  a.send(place());
+  const block = (await a.wait((m) => m.type === "blocks")).blocks[0];
+  b.send(moveSquare(block, 0, 1, "foreign"));
+  assert.match(
+    (await b.wait((m) => m.type === "error" && m.requestId === "foreign"))
+      .message,
+    /own squares/,
+  );
+  const cases = [
+    ["stale", { from: { ...block, ix: block.ix + 1 } }, /changed/],
+    ["resize", { depth: block.depth + 1 }, /original size/],
+    ["far", { ix: block.ix + 30 }, /closer/],
+    ["body", { ix: place().ix - 2, iy: place().iy }, /explorers/],
+    ["invalid", { ix: NaN }, /valid square/],
+  ];
+  for (const [id, changes, expected] of cases) {
+    await buildCooldown();
+    a.send({ ...moveSquare(block, 0, 1, id), ...changes });
+    const error = await a.wait((m) => m.type === "error" && m.requestId === id);
+    assert.match(error.message, expected);
+  }
+  assert.equal(app.rooms.get("test-expedition").blocks[0].iy, block.iy);
+});
+
+test("a failed move reserves both footprints while saving and restores only the original", async (t) => {
+  const { app, dir } = await setup(t);
+  const a = await builder(app, "Builder"),
+    b = await builder(app, "Observer");
+  a.send(place());
+  const block = (await a.wait((m) => m.type === "blocks")).blocks[0];
+  await b.wait((m) => m.type === "blocks");
+  b.clear();
+  const target = path.join(dir, "test-expedition.json");
+  await unlink(target);
+  await mkdir(target);
+  const room = app.rooms.get("test-expedition");
+  let release;
+  room.saving = new Promise((resolve) => {
+    release = resolve;
+  });
+  const request = moveSquare(block);
+  try {
+    await buildCooldown();
+    a.send(request);
+    for (let i = 0; i < 100 && room.collider.fits(blockPosition(request)); i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(room.collider.fits(blockPosition(block)), false);
+    assert.equal(room.collider.fits(blockPosition(request)), false);
+    b.send({ type: "travel", ...blockPosition(block) });
+    const correction = await b.wait((m) => m.type === "position");
+    assert.equal(correction.x, BUILD_HOME.x);
+  } finally {
+    release();
+  }
+  await a.wait((m) => m.type === "error" && m.requestId === request.requestId);
+  assert.equal(room.blocks[0].iy, block.iy);
+  assert.equal(room.collider.fits(blockPosition(block)), false);
+  assert.equal(room.collider.fits(blockPosition(request)), true);
+  assert.equal(
+    b.messages.some((m) => m.type === "blocks"),
     false,
   );
 });

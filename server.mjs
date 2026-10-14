@@ -35,6 +35,7 @@ import {
   validCell,
   blockPosition,
   placementProblem,
+  movementProblem,
   withinBuildReach,
 } from "./public/building.mjs";
 
@@ -566,6 +567,87 @@ export async function createFracticalServer({
                   throw error;
                 }
                 room.blocks = next;
+                broadcastBlocks(room, message.requestId, player.id);
+              });
+            room.mutation = mutation;
+            await mutation;
+          } else if (message.type === "move-block") {
+            if (!validCell(message) || !validCell(message.from)) {
+              errorMessage(
+                socket,
+                "Choose a valid square and destination.",
+                message.requestId,
+              );
+              return;
+            }
+            if (Date.now() - lastBuild < BLOCK_COOLDOWN_MS) {
+              errorMessage(
+                socket,
+                "Wait a moment before moving another square.",
+                message.requestId,
+              );
+              return;
+            }
+            lastBuild = Date.now();
+            const operation = room.mutation || Promise.resolve();
+            const mutation = operation
+              .catch(() => {})
+              .then(async () => {
+                const block = room.blocks.find(
+                  (item) => item.id === message.id,
+                );
+                if (!block || !equalHashes(block.owner, player.tokenHash)) {
+                  errorMessage(
+                    socket,
+                    "You can only move your own squares.",
+                    message.requestId,
+                  );
+                  return;
+                }
+                if (
+                  ["ix", "iy", "depth"].some(
+                    (key) => block[key] !== message.from[key],
+                  )
+                ) {
+                  errorMessage(
+                    socket,
+                    "That square has changed. Pick it up again.",
+                    message.requestId,
+                  );
+                  return;
+                }
+                const problem = movementProblem(
+                  block,
+                  message,
+                  player,
+                  [...room.players.values()],
+                  room.blocks,
+                  collider,
+                );
+                if (problem) {
+                  errorMessage(socket, problem, message.requestId);
+                  return;
+                }
+                const moved = {
+                  ...block,
+                  ix: message.ix,
+                  iy: message.iy,
+                  ...blockPosition(message),
+                };
+                const next = room.blocks.map((item) =>
+                  item.id === block.id ? moved : item,
+                );
+                // Keep both footprints solid until the save succeeds. A failed
+                // write must not restore the old square on top of an explorer.
+                room.collider.setBlocks([...room.blocks, moved]);
+                try {
+                  await persist(room, next);
+                } catch (error) {
+                  room.collider.setBlocks(room.blocks);
+                  throw error;
+                }
+                room.blocks = next;
+                room.collider.setBlocks(next);
                 broadcastBlocks(room, message.requestId, player.id);
               });
             room.mutation = mutation;

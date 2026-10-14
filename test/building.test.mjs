@@ -13,6 +13,8 @@ import {
   blockBounds,
   cellAt,
   placementProblem,
+  movementProblem,
+  blockSizeAt,
   blockClusters,
 } from "../public/building.mjs";
 
@@ -35,6 +37,112 @@ test("the canvas caret agrees with world displacement in every cardinal and diag
     assert.ok(Math.abs(-Math.cos(heading) - -dy / length) < 1e-12);
   }
   assert.deepEqual(motionBetween(from, from), { heading: 0.7, moving: false });
+});
+
+test("moving a square keeps its size and moves the solid footprint", () => {
+  const block = { id: "moving", ix: 0, iy: 0, depth: 4 },
+    target = { ix: 3, iy: 0, depth: 4 },
+    size = blockSizeAt(4),
+    player = { x: 0, y: -size * 2, depth: 4 },
+    terrain = clear();
+  assert.equal(
+    movementProblem(block, target, player, [player], [block], terrain),
+    null,
+  );
+  const moved = { ...block, ...target },
+    collider = new WorldCollider(terrain, [moved]);
+  assert.equal(collider.fits(blockPosition(block)), true);
+  assert.equal(collider.fits(blockPosition(moved)), false);
+  const before = blockBounds(block),
+    after = blockBounds(moved);
+  assert.ok(
+    Math.abs(before.maxX - before.minX - (after.maxX - after.minX)) < 1e-12,
+  );
+  assert.match(
+    movementProblem(
+      block,
+      { ...target, depth: 5 },
+      player,
+      [],
+      [block],
+      terrain,
+    ),
+    /original size/,
+  );
+  assert.match(
+    movementProblem(block, { ...target, ix: 50 }, player, [], [block], terrain),
+    /closer/,
+  );
+  assert.match(
+    movementProblem(
+      block,
+      { ...target, ix: NaN },
+      player,
+      [],
+      [block],
+      terrain,
+    ),
+    /inside the world/,
+  );
+});
+
+test("square sweeps catch thin rock, tiny blocks, and tiny explorers between clear endpoints", () => {
+  const block = { id: "moving", ix: 0, iy: 0, depth: 4 },
+    target = { ix: 3, iy: 0, depth: 4 },
+    size = blockSizeAt(4),
+    player = { x: 0, y: -size * 2, depth: 4 },
+    tiny = { id: "tiny", ix: 384, iy: 128, depth: 12 },
+    body = { x: size * 1.5, y: size * 0.5, depth: 18 },
+    wall = new FractalCollider({
+      clearance: (x) => Math.max(0, Math.abs(x - size * 1.5) - 1e-7),
+    });
+  assert.equal(
+    placementProblem(target, player, [player, body], [tiny], wall),
+    null,
+  );
+  assert.match(
+    movementProblem(block, target, player, [player], [block], wall),
+    /path crosses fractal rock/,
+  );
+  assert.match(
+    movementProblem(block, target, player, [player], [block, tiny], clear()),
+    /block.*path/,
+  );
+  assert.match(
+    movementProblem(block, target, player, [player, body], [block], clear()),
+    /path.*explorers/,
+  );
+});
+
+test("diagonal square sweeps allow clear corners and touching adjacent blocks", () => {
+  const block = { id: "moving", ix: 0, iy: 0, depth: 4 },
+    size = blockSizeAt(4),
+    player = { x: 0, y: size * 3, depth: 4 },
+    corner = { x: -size * 0.2, y: size * 1.2, depth: 5 },
+    obstacle = { id: "corner", ix: 0, iy: 3, depth: 4 };
+  assert.equal(
+    movementProblem(
+      block,
+      { ix: 3, iy: 3, depth: 4 },
+      player,
+      [player, corner],
+      [block, obstacle],
+      clear(),
+    ),
+    null,
+  );
+  const adjacent = { id: "adjacent", ix: 1, iy: -1, depth: 4 };
+  assert.equal(
+    movementProblem(
+      block,
+      { ix: 3, iy: 0, depth: 4 },
+      player,
+      [player],
+      [block, adjacent],
+      clear(),
+    ),
+    null,
+  );
 });
 
 test("individual blocks form arbitrary connected shapes without predefined structures", () => {

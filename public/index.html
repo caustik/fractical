@@ -134,7 +134,8 @@
           hidden
         >
           <p class="panel-intro">
-            Start with a block. Make your own shape at this scale.
+            Place squares, then drag them into your own shape. Zoom to explore
+            what you built at a different scale.
           </p>
           <div
             id="material-options"
@@ -145,6 +146,9 @@
           <div class="build-tools" role="group" aria-label="Building tool">
             <button id="place-mode-button" aria-pressed="false">
               Place blocks
+            </button>
+            <button id="move-mode-button" aria-pressed="false">
+              Move mine
             </button>
             <button id="erase-mode-button" aria-pressed="false">
               Remove mine
@@ -206,6 +210,7 @@
             <button id="cycle-material" aria-label="Change block material">
               Stone ▾
             </button>
+            <button id="move-short" aria-pressed="false">Move</button>
             <button id="erase-short" aria-pressed="false">Remove</button>
             <button id="finish-build">Done</button>
           </div>
@@ -410,7 +415,17 @@
         </div>
         <div>
           <dt><kbd>B</kbd></dt>
-          <dd>Start or finish building. Tap cells to place blocks.</dd>
+          <dd>
+            Start or finish building. Tap cells to place solid squares. Drag
+            your squares to move them.
+          </dd>
+        </div>
+        <div>
+          <dt><kbd>M</kbd> / Move</dt>
+          <dd>
+            Pick up your square, then tap a clear cell to move it. Its world
+            size stays fixed as you zoom.
+          </dd>
         </div>
         <div>
           <dt><kbd>1 2 3</kbd> / <kbd>R</kbd></dt>
@@ -418,7 +433,10 @@
         </div>
         <div>
           <dt><kbd>Space</kbd> / <kbd>Esc</kbd></dt>
-          <dd>Edit the selected cell, or finish building.</dd>
+          <dd>
+            Edit the selected cell. Escape cancels a move, then finishes
+            building.
+          </dd>
         </div>
         <div>
           <dt><kbd>H</kbd></dt>

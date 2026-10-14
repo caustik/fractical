@@ -34,7 +34,7 @@ Visit `http://<this-computer's-LAN-address>:4173` on both devices. Use that addr
 2. Choose **Try the opening** in Discover, or click the **THE NARROWS** marker in the first area. Your explorer walks towards it and stops where the body no longer fits.
 3. Hold **E** for about three seconds while the route remains selected. Shrinking lets you continue through the opening.
 4. Inside the narrow region, hold **Q**. Growth stops at the last legal size. Walk back into open space before growing further.
-5. Press **B**, choose a material, and click nearby cells to assemble a wall or a shape. Walk against it, or try growing inside the space you made. Have the other explorer add their own blocks.
+5. Press **B**, choose a material, and click nearby cells to assemble a wall or a shape. Drag your squares to rearrange it. Walk against it, or try growing inside the space you made. Zoom in and out to see the same squares at different sizes. Have the other explorer add their own blocks.
 6. Use a preset signal to ask someone to follow or wait. Finish building with **B**, **Escape**, or **Done**.
 
 The **Discover**, **Home**, **Meet**, invitation, and construction visit shortcuts land on clear ground. These are explicit relocations. Ordinary walking, click movement, following, and size changes use collision checks. Double-clicking shrinks in place and walks towards the selected point.
@@ -50,10 +50,11 @@ The **Discover**, **Home**, **Meet**, invitation, and construction visit shortcu
 | Shrink and walk towards a point | Double-click the terrain               |
 | Start or finish building        | B or Build blocks                      |
 | Place a block                   | Click or tap a highlighted cell        |
+| Move your own square            | Drag it while building, or M / Move then select a square and a destination |
 | Choose stone, glass, or glow    | 1, 2, 3 or the material buttons        |
 | Remove your own blocks          | R or Remove, then select a block       |
-| Edit the current cell           | Space while building                   |
-| Finish building                 | Escape or Done                         |
+| Edit the current cell           | Space while building; in Move, pick up then place |
+| Cancel a move / finish building | Escape / Escape again, or Done          |
 | Return home                     | H or Home                              |
 | Walk on a phone                 | Drag the circular walking pad          |
 | Meet or follow someone          | Together                               |
@@ -68,7 +69,7 @@ Optional sound is synthesized locally. It starts only when you turn it on. Fonts
 - A caret that follows actual displacement, including wall sliding and following.
 - Real connected explorers, WebSocket presence, movement interpolation, and preset signals.
 - Meet and follow actions across coordinates and depth.
-- Individual square blocks that can be assembled into arbitrary shapes. Placement is shared immediately and persisted.
+- Individual square blocks that can be assembled and moved into arbitrary shapes. Confirmed edits are shared and persisted.
 - Stone, glass, and glow materials, a placement grid, valid/blocked previews, and physical block collisions.
 - Per-explorer removal permissions and generated names that survive a server restart.
 - Named expeditions with separate presence, constructions, and signals.
@@ -82,6 +83,8 @@ Each expedition holds up to 32 explorers and 1,024 blocks. Depth is 0-18, about 
 This is a top-down, two-dimensional character controller. The fractal and placed blocks are solid; dark channels are traversable. The ring around your explorer is its physical footprint. Motion uses small collision-checked steps, with sliding along walls. Growth keeps the center fixed and stops before overlap. Other explorers are non-solid.
 
 Blocks snap to a world grid at the nearest whole depth level. Their size stays fixed in world coordinates after placement. Each level halves the block size, so smaller building can add detail inside a larger construction. Place within six cells of your body. Cells cannot overlap fractal rock, existing blocks at any scale, or an explorer's body. All three materials are solid. Adjacent blocks at the same scale appear as a construction in **Build**, with a small map and a visit shortcut. Remove your own blocks at their scale and within reach. Placement has a 120 ms cooldown.
+
+Drag your squares while building, or use **Move** to select a square and then a destination. Moves snap to the square's original grid and preserve its size, material, and ownership. Work at its scale and keep both endpoints within reach. The straight path must clear rock, other blocks, and explorers. A preview shows the destination; the original remains solid until release and server confirmation. Invalid drops and Escape leave it in place. Moves share the 120 ms placement cooldown and survive restarts. Zooming changes how large an existing square looks, not its physical dimensions.
 
 Communication uses six fixed signals: hello, over here, follow, wait, go smaller, and thank you. The server accepts only these signal IDs, rate-limits them to one every three seconds per browser credential, and preserves that cooldown across reconnects. Free-form chat, custom explorer names, and landmark notes are removed. Extra text sent by a modified client is discarded. Expedition names remain invitation identifiers.
 
@@ -109,7 +112,7 @@ Tests use real WebSocket connections against ephemeral local servers. They cover
 
 Physics tests cover a real narrowing Mandelbrot passage, entry after shrinking, growth clamping without relocation, fast movement against a thin wall, wall sliding, refinement, and body bounds. Building tests cover primitive composition, collisions, growth limits, all caret directions, and placement over terrain or other bodies. A failed disk write never publishes a block or leaves a reserved cell behind.
 
-All 20 tests pass on Node.js 22 and 24. Browser playthroughs assembled a 17-block wall through the placement UI, shared it with another explorer, confirmed that it limits growth, and followed through its opening. They also covered building on the real fractal coast, phone placement and removal, the 320-pixel phone layout, CPU building, restart recovery, safe invitations into built areas, and preset signals. Keyboard and follow carets matched actual movement. Physical playthroughs confirmed the real narrowing passage and collision-limited growth.
+Square-movement tests cover clear and blocked paths, tiny obstacles and explorers, fixed size, stale edits, ownership, restart recovery, and rollback after a failed save. The suite passes on Node.js 22. Headless browser checks cover desktop dragging, two-tap phone moves, touch dragging, keyboard moves, Escape cancellation, invalid drops, shared updates, zoom scaling, real-coast placement, and the 320-pixel phone layout.
 
 | File                        | Owns                                                                          |
 | --------------------------- | ----------------------------------------------------------------------------- |

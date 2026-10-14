@@ -191,7 +191,7 @@ export class Entities {
       });
     }
     if (buildPreview) {
-      const level = Math.round(me.depth),
+      const level = buildPreview.cell?.depth ?? Math.round(me.depth),
         size = blockSizeAt(level),
         pixel = (size / spanAt(camera.depth)) * this.height;
       const center = cellAt(me, level);
@@ -239,6 +239,7 @@ export class Entities {
         continue;
       const material = MATERIALS[block.material];
       ctx.save();
+      if (buildPreview?.source?.id === block.id) ctx.globalAlpha = 0.35;
       ctx.fillStyle = material.fill;
       ctx.strokeStyle = material.edge;
       ctx.lineWidth = Math.max(0.5, Math.min(1.5, pixel / 15));
@@ -297,11 +298,15 @@ export class Entities {
       ctx.fillRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
       ctx.strokeRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
       this.label(
-        buildPreview.erase
-          ? "REMOVE"
-          : buildPreview.allowed
-            ? "PLACE"
-            : "BLOCKED",
+        !buildPreview.allowed
+          ? "BLOCKED"
+          : buildPreview.moving
+            ? "MOVE"
+            : buildPreview.picking
+              ? "PICK UP"
+              : buildPreview.erase
+                ? "REMOVE"
+                : "PLACE",
         p.x,
         p.y - pixel / 2 - 11,
         ctx.strokeStyle,

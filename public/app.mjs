@@ -29,6 +29,7 @@ import {
   cellAt,
   WorldCollider,
   placementProblem,
+  movementProblem,
   pickBlock,
   withinBuildReach,
   blockClusters,
@@ -115,6 +116,9 @@ let pendingBuild = null,
 let buildMode = null,
   material = "stone",
   buildPointer = null;
+let selectedBlock = null,
+  blockDrag = null,
+  pointerStart = null;
 let signalReadyAt = 0,
   signalTimer;
 let unreadRadio = 0;
@@ -399,6 +403,19 @@ function connect() {
     else if (message.type === "blocks") {
       blocks = message.blocks;
       collider.setBlocks(blocks);
+      if (
+        selectedBlock &&
+        !blocks.some(
+          (block) =>
+            block.id === selectedBlock.id &&
+            block.ix === selectedBlock.ix &&
+            block.iy === selectedBlock.iy &&
+            block.depth === selectedBlock.depth,
+        )
+      ) {
+        cancelBlockMove();
+        toast("That square changed. Pick it up again.");
+      }
       renderBlocks();
       updateCounts();
       if (pendingBuild && message.requestId === pendingBuild) {
@@ -791,6 +808,7 @@ function setBuildMode(mode) {
     toast("Reconnect before building.");
     return;
   }
+  cancelBlockMove();
   buildMode = mode;
   if (mode) {
     stopFollowing();
@@ -808,16 +826,22 @@ function setBuildMode(mode) {
   $("build-banner").hidden = !mode;
   $("build-button").textContent = mode ? "Finish building" : "+ Build blocks";
   $("place-mode-button").setAttribute("aria-pressed", String(mode === "place"));
+  $("move-mode-button").setAttribute("aria-pressed", String(mode === "move"));
+  $("move-short").setAttribute("aria-pressed", String(mode === "move"));
   $("erase-mode-button").setAttribute("aria-pressed", String(mode === "erase"));
   $("erase-short").setAttribute("aria-pressed", String(mode === "erase"));
   $("build-status").textContent = mode
-    ? "Tap a cell near you. Blocks are solid."
+    ? "Tap to place. Drag your squares to move them. Their world size stays fixed."
     : "Build at your scale. B starts or finishes.";
   if (mode && innerWidth <= 700)
     document.querySelector(".fieldnotes").classList.remove("expanded");
   world.focus({ preventScroll: true });
 }
 $("place-mode-button").addEventListener("click", () => setBuildMode("place"));
+$("move-mode-button").addEventListener("click", () => setBuildMode("move"));
+$("move-short").addEventListener("click", () =>
+  setBuildMode(buildMode === "move" ? "place" : "move"),
+);
 $("erase-mode-button").addEventListener("click", () => setBuildMode("erase"));
 $("erase-short").addEventListener("click", () =>
   setBuildMode(buildMode === "erase" ? "place" : "erase"),
@@ -848,16 +872,39 @@ function buildPoint() {
 }
 function buildPreview(point = buildPoint()) {
   if (!buildMode) return null;
+  if (selectedBlock) {
+    const offset = blockDrag?.offset || { x: 0, y: 0 };
+    const cell = cellAt(
+      { x: point.x - offset.x, y: point.y - offset.y },
+      selectedBlock.depth,
+    );
+    const problem = movementProblem(
+      selectedBlock,
+      cell,
+      me,
+      [me, ...others.values()],
+      blocks,
+      terrainCollider,
+    );
+    return {
+      cell,
+      material: selectedBlock.material,
+      allowed: !problem,
+      problem,
+      moving: true,
+      source: selectedBlock,
+    };
+  }
   const cell =
-    buildMode === "erase" ? pickBlock(point, blocks) : cellAt(point, me.depth);
+    buildMode !== "place" ? pickBlock(point, blocks) : cellAt(point, me.depth);
   const problem =
-    buildMode === "erase"
+    buildMode !== "place"
       ? !cell
-        ? "Tap one of your blocks."
+        ? "Choose one of your squares."
         : !cell.owned
           ? "This block belongs to another explorer."
           : !withinBuildReach(cell, me)
-            ? "Walk closer. Remove at its own scale."
+            ? "Walk closer. Edit squares at their own scale."
             : null
       : placementProblem(
           cell,
@@ -872,26 +919,92 @@ function buildPreview(point = buildPoint()) {
     allowed: !problem,
     problem,
     erase: buildMode === "erase",
+    picking: buildMode === "move",
   };
+}
+function cancelBlockMove() {
+  const pointerId = blockDrag?.id;
+  pointerStart = null;
+  blockDrag = null;
+  selectedBlock = null;
+  world.classList.remove("dragging-block");
+  if (pointerId !== undefined && world.hasPointerCapture(pointerId))
+    world.releasePointerCapture(pointerId);
+}
+function selectBlock(block) {
+  if (!block?.owned) {
+    toast(
+      block
+        ? "This square belongs to another explorer."
+        : "Choose one of your squares.",
+    );
+    return false;
+  }
+  if (!withinBuildReach(block, me)) {
+    toast("Walk closer. Move squares at their own scale.");
+    return false;
+  }
+  selectedBlock = { ...block };
+  $("build-status").textContent =
+    "Move the square to a clear cell. Escape cancels.";
+  return true;
 }
 function editAt(point) {
   if (pendingBuild) return;
+  if (buildMode === "move" && !selectedBlock) {
+    selectBlock(pickBlock(point, blocks));
+    return;
+  }
   const preview = buildPreview(point);
   if (!preview || preview.problem) {
     if (preview?.problem) toast(preview.problem);
     return;
   }
+  commitBuildPreview(preview);
+}
+function commitBuildPreview(preview) {
+  if (pendingBuild || !preview?.cell) return;
+  if (preview.problem) {
+    toast(preview.problem);
+    return;
+  }
+  if (
+    preview.moving &&
+    preview.cell.ix === selectedBlock.ix &&
+    preview.cell.iy === selectedBlock.iy
+  ) {
+    cancelBlockMove();
+    return;
+  }
   const buildId = requestId();
   sendPosition(true);
   const sent = send(
-    preview.erase
-      ? { type: "remove-block", id: preview.cell.id, requestId: buildId }
-      : { type: "place-block", ...preview.cell, material, requestId: buildId },
+    preview.moving
+      ? {
+          type: "move-block",
+          id: selectedBlock.id,
+          ...preview.cell,
+          from: {
+            ix: selectedBlock.ix,
+            iy: selectedBlock.iy,
+            depth: selectedBlock.depth,
+          },
+          requestId: buildId,
+        }
+      : preview.erase
+        ? { type: "remove-block", id: preview.cell.id, requestId: buildId }
+        : {
+            type: "place-block",
+            ...preview.cell,
+            material,
+            requestId: buildId,
+          },
   );
   if (!sent) {
     toast("Reconnect before building.");
     return;
   }
+  cancelBlockMove();
   pendingBuild = buildId;
   $("build-status").textContent = "Saving the edit…";
   buildTimer = setTimeout(() => {
@@ -972,7 +1085,12 @@ addEventListener("keydown", (event) => {
   if (buildMode && !event.repeat) {
     if (key === "Escape") {
       event.preventDefault();
-      setBuildMode(null);
+      if (selectedBlock) cancelBlockMove();
+      else setBuildMode(null);
+    }
+    if (key === "m") {
+      event.preventDefault();
+      setBuildMode(buildMode === "move" ? "place" : "move");
     }
     if (key === "r") {
       event.preventDefault();
@@ -999,6 +1117,7 @@ addEventListener("keyup", (event) => {
   keys.delete(key);
 });
 addEventListener("blur", () => {
+  cancelBlockMove();
   keys.clear();
   touchVector = { x: 0, y: 0 };
   me.moving = false;
@@ -1006,6 +1125,7 @@ addEventListener("blur", () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    cancelBlockMove();
     keys.clear();
     touchVector = { x: 0, y: 0 };
     me.moving = false;
@@ -1040,32 +1160,71 @@ world.addEventListener(
   },
   { passive: false },
 );
-let pointerStart;
 world.addEventListener("pointermove", (event) => {
+  if (blockDrag && blockDrag.id !== event.pointerId) return;
   if (event.target !== world && event.target.tagName !== "CANVAS") return;
   const rect = world.getBoundingClientRect();
   buildPointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 });
 world.addEventListener("pointerleave", () => {
-  buildPointer = null;
+  if (!blockDrag) buildPointer = null;
 });
 world.addEventListener("pointerdown", (event) => {
-  if (event.target === world || event.target.tagName === "CANVAS")
-    pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+  if (event.button !== 0 || !event.isPrimary || blockDrag || isEditing())
+    return;
+  if (event.target !== world && event.target.tagName !== "CANVAS") return;
+  pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+  if (!buildMode || buildMode === "erase" || pendingBuild || selectedBlock)
+    return;
+  const rect = world.getBoundingClientRect();
+  buildPointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  const point = buildPoint(),
+    block = pickBlock(point, blocks);
+  if (!block) return;
+  if (!selectBlock(block)) {
+    pointerStart = null;
+    return;
+  }
+  const center = blockPosition(block);
+  blockDrag = {
+    id: event.pointerId,
+    offset: { x: point.x - center.x, y: point.y - center.y },
+  };
+  world.setPointerCapture(event.pointerId);
+  world.classList.add("dragging-block");
+  world.focus({ preventScroll: true });
+  event.preventDefault();
 });
 world.addEventListener("pointerup", (event) => {
   if (!pointerStart || pointerStart.id !== event.pointerId) return;
   const start = pointerStart;
   pointerStart = null;
+  const rect = world.getBoundingClientRect(),
+    x = event.clientX - rect.left,
+    y = event.clientY - rect.top;
+  buildPointer = { x, y };
+  if (blockDrag?.id === event.pointerId) {
+    const dragged =
+      Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8;
+    const preview = buildPreview();
+    blockDrag = null;
+    world.classList.remove("dragging-block");
+    world.releasePointerCapture(event.pointerId);
+    if (dragged) {
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height || isEditing())
+        cancelBlockMove();
+      else if (preview.problem) {
+        toast(preview.problem);
+        cancelBlockMove();
+      } else commitBuildPreview(preview);
+    }
+    return;
+  }
   if (
     Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8 ||
     isEditing()
   )
     return;
-  const rect = world.getBoundingClientRect(),
-    x = event.clientX - rect.left,
-    y = event.clientY - rect.top;
-  buildPointer = { x, y };
   if (buildMode) {
     editAt(buildPoint());
     world.focus({ preventScroll: true });
@@ -1095,6 +1254,11 @@ world.addEventListener("pointerup", (event) => {
     y: clamp(camera.y - ((y - rect.height / 2) / rect.height) * span, -2, 2),
   };
 });
+for (const event of ["pointercancel", "lostpointercapture"])
+  world.addEventListener(event, (event) => {
+    if (pointerStart?.id === event.pointerId) pointerStart = null;
+    if (blockDrag?.id === event.pointerId) cancelBlockMove();
+  });
 world.addEventListener("dblclick", (event) => {
   if (buildMode) return;
   if (event.target !== world && event.target.tagName !== "CANVAS") return;
@@ -1188,9 +1352,13 @@ function updateLabels() {
     const preview = buildPreview();
     $("build-caption").textContent =
       preview.problem ||
-      (buildMode === "erase"
-        ? "Tap to remove your block"
-        : `Tap to place / depth ${Math.round(me.depth)}`);
+      (selectedBlock
+        ? "Release or tap to move / Esc cancels"
+        : buildMode === "move"
+          ? "Drag a square, or tap to pick it up"
+          : buildMode === "erase"
+            ? "Tap to remove your block"
+            : `Tap to place · drag to move / depth ${Math.round(me.depth)}`);
   }
 }
 let previousMoving = false,

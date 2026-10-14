@@ -20,7 +20,7 @@ Discover, Home, Meet, invitations, and construction visits relocate to clear gro
 
 ## Building and communication
 
-Building uses individual square primitives on a grid at the explorer's current scale. Stone, glass, and glow change the material of a cell. People compose their own walls, openings, and shapes one block at a time. Smaller blocks can add detail at finer scales. Placement rejects occupied geometry and preserves room for every connected explorer. Blocks are shared live, persist across restarts, and can be removed by their builder.
+Building uses individual square primitives on a grid at the explorer's current scale. Stone, glass, and glow change the material of a cell. People compose their own walls, openings, and shapes one block at a time. Smaller blocks can add detail at finer scales. Placement rejects occupied geometry and preserves room for every connected explorer. Builders can drag their squares or select a square and a destination with Move. Moves preserve the original world size and require a clear path. Squares grow or shrink on screen with the camera. Confirmed edits are shared live, persist across restarts, and can be removed by their builder.
 
 People communicate with fixed signals: hello, over here, follow, wait, go smaller, and thank you. There is no free-form chat or public text annotation. Explorer names are generated. The server validates signal IDs and applies a cooldown that survives reconnects. This keeps language predictable while preserving ways to coordinate movement and building.
 
@@ -32,7 +32,7 @@ Try two to six people in one expedition. Run one local server and have participa
 2. Hold **E** while the walking route remains selected. Shrinking should let you enter.
 3. Inside, hold **Q**. Notice that growth stops without moving the body out of the gap.
 4. Walk towards open space, then try growing again.
-5. Press **B** and build a wall from nearby cells. Leave an opening, then try walking and growing through it. Invite another explorer to add their own blocks.
+5. Press **B** and build a wall from nearby cells. Drag a square to change the opening, then try walking and growing through it. Zoom to compare its size with your body. Invite another explorer to add their own blocks.
 6. Follow another explorer through a route they discovered.
 
 Let people attempt the first opening before explaining the controls. Watch whether collision feedback makes them infer the role of scale. The first session needs observations and voluntary feedback; no analytics service is included.

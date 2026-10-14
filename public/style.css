@@ -904,6 +904,10 @@ kbd {
 .world.building canvas {
   cursor: crosshair;
 }
+.world.dragging-block,
+.world.dragging-block canvas {
+  cursor: grabbing;
+}
 .build-banner {
   position: absolute;
   z-index: 3;
