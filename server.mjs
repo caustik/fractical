@@ -1,5 +1,12 @@
 import http from "node:http";
-import { readFile, writeFile, mkdir, rename, unlink } from "node:fs/promises";
+import {
+  readFile,
+  writeFile,
+  mkdir,
+  rename,
+  unlink,
+  access,
+} from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import {
@@ -40,6 +47,7 @@ import {
 } from "./public/building.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const FRONTEND_ROOT = path.join(ROOT, "_site");
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -211,8 +219,8 @@ export async function createFracticalServer({
         url.pathname === "/"
           ? "index.html"
           : decodeURIComponent(url.pathname).slice(1);
-      const target = path.resolve(ROOT, "public", relative);
-      const publicRoot = path.join(ROOT, "public") + path.sep;
+      const target = path.resolve(FRONTEND_ROOT, relative);
+      const publicRoot = FRONTEND_ROOT + path.sep;
       if (!target.startsWith(publicRoot) || !MIME[path.extname(target)]) {
         response.writeHead(404);
         response.end("Not found");
@@ -798,6 +806,14 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 ) {
+  try {
+    await access(path.join(FRONTEND_ROOT, "index.html"));
+  } catch {
+    console.error(
+      "Build the frontend with npm run build before npm start, or use npm run dev.",
+    );
+    process.exit(1);
+  }
   const host = process.env.HOST || "127.0.0.1";
   const port = Number(process.env.PORT || 4173);
   const app = await createFracticalServer({

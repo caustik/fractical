@@ -8,22 +8,32 @@ Development and playtests run locally. Everyone connected to the same server can
 
 ## Run
 
-Use Node.js 22 or newer. From this directory:
+Use Node.js 22.12 or newer. From this directory:
 
 ```powershell
 npm ci --ignore-scripts
+npm run dev
+```
+
+Open <http://127.0.0.1:4173>. Astro serves the frontend and connects `/live` and `/health` to the game server. `start-fractical.cmd` starts the same development server on Windows and installs dependencies if they are missing.
+
+To test the production build locally:
+
+```powershell
+npm run build
 npm start
 ```
 
-Open <http://127.0.0.1:4173>. `start-fractical.cmd` runs the same app on Windows and installs the locked dependency if it is missing.
+Astro writes `_site/`; the Node server serves that build and the live world on one port. `npm run preview` runs the same complete server. Persistent worlds stay in `.local/` across frontend rebuilds.
+
+The font dependency is pinned to `unifont` 0.7.4 to preserve Astro's Node 22.12 minimum; newer releases pull in an HTTP client requiring Node 22.19. Review this pin when raising the supported Node version.
 
 Open a second browser or a private window and use the same expedition link. Each explorer receives a generated name; choose a color in **Together**. Two tabs also work, but tabs in the same browser profile share their identity, color, and ownership credential. Restart the server and reload open pages after updating the prototype.
 
 The server defaults to loopback. For a test with another computer or phone on your network:
 
 ```powershell
-$env:HOST = '0.0.0.0'
-npm start
+npm run dev -- --host 0.0.0.0
 ```
 
 Visit `http://<this-computer's-LAN-address>:4173` on both devices. Use that address when copying invitations. Network and Windows firewall settings must permit the connection. This does not create a public internet link.
@@ -96,7 +106,7 @@ The app needs one long-running Node.js process, WebSocket upgrade support, and a
 
 Set `HOST=0.0.0.0`, `PORT` to the host's assigned port, and `FRACTICAL_DATA_DIR` to its persistent disk. Put the server behind HTTPS with the original Host header preserved for WebSocket upgrades. Run one replica: live rooms are held in that process. Multiple replicas need a coordinated room backend first.
 
-`Dockerfile` provides a minimal container. Mount a persistent volume at `/var/lib/fractical`. Its default port is 4173. Keep the data directory separate from the source repository.
+`Dockerfile` builds the Astro frontend in a build stage and provides a Node runtime container. Mount a persistent volume at `/var/lib/fractical`. Its default port is 4173. Keep the data directory separate from the source repository.
 
 The public source repository is [caustik/fractical](https://github.com/caustik/fractical). The source-sharing draft is in [POST.md](POST.md). [EXPERIMENT.md](EXPERIMENT.md) records the concept, playtest questions, and the next useful decisions.
 
@@ -117,6 +127,10 @@ Square-movement tests cover clear and blocked paths, tiny obstacles and explorer
 | File                        | Owns                                                                          |
 | --------------------------- | ----------------------------------------------------------------------------- |
 | `server.mjs`                | HTTP, live rooms, persistence, and protocol validation                        |
+| `src/pages/index.astro`     | Hand-maintained Astro page and UI markup                                     |
+| `src/styles/global.css`     | Shared page and game styles                                                  |
+| `src/integrations/world.mjs` | Development game server, same-origin proxy, and shutdown                      |
+| `astro.config.mjs`          | Astro frontend configuration and `_site/` output                             |
 | `public/world.mjs`          | Coordinates, depth, destinations, heading, generated names, and fixed signals |
 | `public/physics.mjs`        | Solid cells, physical body, swept steps, growth, and safe landing             |
 | `public/building.mjs`       | Block grid, materials, placement, spatial collisions, and connected shapes    |

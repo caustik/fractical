@@ -5,14 +5,22 @@
   "type": "module",
   "description": "A shared, persistent world on the Mandelbrot coast.",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "start": "node server.mjs",
-    "dev": "node --watch server.mjs",
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "node server.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "astro": "^7.3.8"
+  },
+  "overrides": {
+    "unifont": "0.7.4"
   }
 }
