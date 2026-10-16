@@ -25,7 +25,7 @@ export class FieldSound {
       noise.buffer = buffer;
       noise.loop = true;
       this.filter = this.context.createBiquadFilter();
-      this.filter.type = 'lowpass';
+      this.filter.type = "lowpass";
       this.filter.frequency.value = 300;
       const gain = this.context.createGain();
       gain.gain.value = 0.15;
@@ -55,7 +55,7 @@ export class FieldSound {
     const osc = this.context.createOscillator(),
       gain = this.context.createGain(),
       time = this.context.currentTime;
-    osc.type = 'sine';
+    osc.type = "sine";
     osc.frequency.value = 110 * 2 ** (note / 12);
     gain.gain.setValueAtTime(0, time);
     gain.gain.linearRampToValueAtTime(0.07, time + 0.8);

@@ -4,7 +4,7 @@ Walk into a fractal. Shrink to fit. Meet someone inside.
 
 A playable experiment in treating the Mandelbrot set as solid, shared geometry. Your body occupies space. A narrow opening stops you until you shrink; growing is blocked when the larger body would overlap the rock.
 
-Development and playtests run locally. Everyone connected to the same server can explore and build together; each server keeps its own worlds. A hosted public game is a separate decision. The server and Dockerfile are included for anyone who wants to host their own instance.
+Development and playtests run locally. Everyone connected to the same server can explore and build together; each server keeps its own worlds. There is no public hosted instance. The server and Dockerfile are included for anyone who wants to host their own instance.
 
 ## Run
 
@@ -96,9 +96,9 @@ Blocks snap to a world grid at the nearest whole depth level. Their size stays f
 
 Drag your squares while building, or use **Move** to select a square and then a destination. Moves snap to the square's original grid and preserve its size, material, and ownership. Work at its scale and keep both endpoints within reach. The straight path must clear rock, other blocks, and explorers. A preview shows the destination; the original remains solid until release and server confirmation. Invalid drops and Escape leave it in place. Moves share the 120 ms placement cooldown and survive restarts. Zooming changes how large an existing square looks, not its physical dimensions.
 
-Communication uses six fixed signals: hello, over here, follow, wait, go smaller, and thank you. The server accepts only these signal IDs, rate-limits them to one every three seconds per browser credential, and preserves that cooldown across reconnects. Free-form chat, custom explorer names, and landmark notes are removed. Extra text sent by a modified client is discarded. Expedition names remain invitation identifiers.
+Communication uses six fixed signals: hello, over here, follow, wait, go smaller, and thank you. The server accepts only these signal IDs, rate-limits them to one every three seconds per browser credential, and preserves that cooldown across reconnects. There is no free-form chat, custom naming, or landmark notes. Extra text sent by a modified client is discarded. Expedition names remain invitation identifiers.
 
-This is an anonymous, small-group prototype. Expedition names are identifiers, not access controls. Generated names, positions, signals, and blocks are visible to people in the same expedition. The last 60 signals remain in server memory. Persistent blocks are saved in `.local/<expedition>.json`; keep that directory if you want to keep your world. Ownership is held by a random browser-local token. Clearing browser storage loses the ability to remove earlier blocks. Earlier marker records are retained as `legacyMarks` when the file is next saved, and their text is never broadcast. An open public trial needs stronger identity and room controls.
+This is an anonymous, small-group prototype. Expedition names are identifiers, not access controls. Generated names, positions, signals, and blocks are visible to people in the same expedition. The last 60 signals remain in server memory. Persistent blocks are saved in `.local/<expedition>.json`; keep that directory if you want to keep your world. A saved file the server cannot understand is renamed to `<expedition>.json.unreadable-<time>` and logged, and the expedition opens empty; the original file stays available for manual recovery. Ownership is held by a random browser-local token. Clearing browser storage loses the ability to remove earlier blocks. Marker records from earlier versions stay on disk as `legacyMarks` and are never broadcast. An open public trial needs stronger identity and room controls.
 
 ## Optional self-hosting
 
@@ -106,11 +106,9 @@ The app needs one long-running Node.js process, WebSocket upgrade support, and a
 
 Set `HOST=0.0.0.0`, `PORT` to the host's assigned port, and `FRACTICAL_DATA_DIR` to its persistent disk. Put the server behind HTTPS with the original Host header preserved for WebSocket upgrades. Run one replica: live rooms are held in that process. Multiple replicas need a coordinated room backend first.
 
-`Dockerfile` builds the Astro frontend in a build stage and provides a Node runtime container. Mount a persistent volume at `/var/lib/fractical`. Its default port is 4173. Keep the data directory separate from the source repository.
+`Dockerfile` builds the Astro frontend in a build stage and provides a Node runtime container. Mount a persistent volume at `/var/lib/fractical`. Its default port is 4173. Keep the data directory separate from the source repository. The container is optional, and the Docker image is not built or tested automatically.
 
-The public source repository is [caustik/fractical](https://github.com/caustik/fractical). The source-sharing draft is in [POST.md](POST.md). [EXPERIMENT.md](EXPERIMENT.md) records the concept, playtest questions, and the next useful decisions.
-
-The container is optional. Its build has not been verified here because the local Docker engine is not running.
+The public source repository is [caustik/fractical](https://github.com/caustik/fractical). [EXPERIMENT.md](EXPERIMENT.md) records the concept, playtest questions, and the next useful decisions.
 
 ## Verification and code
 
@@ -118,26 +116,22 @@ The container is optional. Its build has not been verified here because the loca
 npm test
 ```
 
-Tests use real WebSocket connections against ephemeral local servers. They cover room isolation, movement and heading, preset signals, rejected free-form text, reconnect cooldowns, placement restrictions, concurrent persistence, ownership, server restarts, malformed coordinates, and cross-origin upgrade rejection.
+Server tests run real WebSocket clients against temporary servers and data directories, covering the protocol, persistence, permissions, and failure handling. Physics and building tests exercise the shared collision code directly, and a frontend test starts Astro and joins the live world through its same-origin proxy. There are no automated browser tests; check desktop and phone layouts in a browser after interface changes.
 
-Physics tests cover a real narrowing Mandelbrot passage, entry after shrinking, growth clamping without relocation, fast movement against a thin wall, wall sliding, refinement, and body bounds. Building tests cover primitive composition, collisions, growth limits, all caret directions, and placement over terrain or other bodies. A failed disk write never publishes a block or leaves a reserved cell behind.
+| File                         | Owns                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| `server.mjs`                 | HTTP, live rooms, persistence, and protocol validation                                      |
+| `src/pages/index.astro`      | Hand-maintained Astro page and UI markup                                                    |
+| `src/styles/global.css`      | Shared page and game styles                                                                 |
+| `src/integrations/world.mjs` | Development game server, same-origin proxy, and shutdown                                    |
+| `astro.config.mjs`           | Astro frontend configuration and `_site/` output                                            |
+| `public/world.mjs`           | Coordinates, world bounds, depth, destinations, heading, generated names, and fixed signals |
+| `public/physics.mjs`         | Fractal geometry, solid cells, physical body, swept steps, growth, and safe landing         |
+| `public/building.mjs`        | Block grid, materials, placement, spatial collisions, and connected shapes                  |
+| `public/app.mjs`             | Controls, camera, networking, invitations, and UI                                           |
+| `public/terrain.mjs`         | WebGL terrain and render quality                                                            |
+| `public/terrain-worker.mjs`  | CPU fallback outside the interaction thread                                                 |
+| `public/entities.mjs`        | Explorers, blocks, placement previews, trails, and signals                                  |
+| `public/sound.mjs`           | Opt-in ambient audio                                                                        |
 
-Square-movement tests cover clear and blocked paths, tiny obstacles and explorers, fixed size, stale edits, ownership, restart recovery, and rollback after a failed save. The suite passes on Node.js 22. Headless browser checks cover desktop dragging, two-tap phone moves, touch dragging, keyboard moves, Escape cancellation, invalid drops, shared updates, zoom scaling, real-coast placement, and the 320-pixel phone layout.
-
-| File                        | Owns                                                                          |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| `server.mjs`                | HTTP, live rooms, persistence, and protocol validation                        |
-| `src/pages/index.astro`     | Hand-maintained Astro page and UI markup                                     |
-| `src/styles/global.css`     | Shared page and game styles                                                  |
-| `src/integrations/world.mjs` | Development game server, same-origin proxy, and shutdown                      |
-| `astro.config.mjs`          | Astro frontend configuration and `_site/` output                             |
-| `public/world.mjs`          | Coordinates, depth, destinations, heading, generated names, and fixed signals |
-| `public/physics.mjs`        | Solid cells, physical body, swept steps, growth, and safe landing             |
-| `public/building.mjs`       | Block grid, materials, placement, spatial collisions, and connected shapes    |
-| `public/app.mjs`            | Controls, camera, networking, invitations, and UI                             |
-| `public/terrain.mjs`        | WebGL terrain and render quality                                              |
-| `public/terrain-worker.mjs` | CPU fallback outside the interaction thread                                   |
-| `public/entities.mjs`       | Explorers, blocks, placement previews, trails, and signals                    |
-| `public/sound.mjs`          | Opt-in ambient audio                                                          |
-
-The [ws documentation](https://github.com/websockets/ws) owns WebSocket behavior. [MDN's WebGL guidance](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices) describes GPU precision and device constraints. A later distributed version could use a room coordinator such as [Cloudflare Durable Objects](https://developers.cloudflare.com/workers/tutorials/deploy-a-realtime-chat-app/), but this version uses a single Node process.
+References: the [ws documentation](https://github.com/websockets/ws) for WebSocket behavior and [MDN's WebGL guidance](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices) for GPU precision and device constraints.

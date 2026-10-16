@@ -1,15 +1,15 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { HOME } from '../public/world.mjs';
+import test from "node:test";
+import assert from "node:assert/strict";
+import { HOME } from "../public/world.mjs";
 import {
   FractalCollider,
   PASSAGE,
   bodyRadiusAt,
   moveBody,
   resizeBody,
-} from '../public/physics.mjs';
+} from "../public/physics.mjs";
 
-test('a real Mandelbrot passage is blocked at the starting size and reachable after shrinking', () => {
+test("a real Mandelbrot passage is blocked at the starting size and reachable after shrinking", () => {
   const collider = new FractalCollider();
   assert.equal(collider.fits(HOME), true);
   assert.equal(collider.fits({ ...PASSAGE, depth: HOME.depth }), false);
@@ -33,7 +33,7 @@ test('a real Mandelbrot passage is blocked at the starting size and reachable af
   assert.equal(collider.fits(smaller), true);
 });
 
-test('growth stops at the last legal size without moving the body out of a gap', () => {
+test("growth stops at the last legal size without moving the body out of a gap", () => {
   const collider = new FractalCollider();
   const grown = resizeBody(PASSAGE, HOME.depth, collider);
   assert.equal(grown.blocked, true);
@@ -47,7 +47,7 @@ test('growth stops at the last legal size without moving the body out of a gap',
   assert.equal(collider.fits(shrunk), true);
 });
 
-test('fast movement cannot cross a thin wall, and diagonal input slides along it', () => {
+test("fast movement cannot cross a thin wall, and diagonal input slides along it", () => {
   const collider = new FractalCollider({
     clearance: (x) => Math.max(0, Math.abs(x) - 0.00001),
   });
@@ -62,7 +62,7 @@ test('fast movement cannot cross a thin wall, and diagonal input slides along it
   assert.equal(collider.fits(slid), true);
 });
 
-test('refinement preserves room to shrink and body bounds include the full radius', () => {
+test("refinement preserves room to shrink and body bounds include the full radius", () => {
   const collider = new FractalCollider();
   const spots = [HOME, PASSAGE, { x: -2.5, y: 0.5, depth: 0 }];
   for (const body of spots) {

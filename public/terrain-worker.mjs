@@ -1,7 +1,7 @@
-import { escapeIterations } from './physics.mjs';
+import { escapeIterations } from "./physics.mjs";
 
 // The light renderer stays off the interaction thread, including at deep zoom.
-self.addEventListener('message', (event) => {
+self.addEventListener("message", (event) => {
   const { camera, width, height, span, max } = event.data;
   const pixels = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y++)

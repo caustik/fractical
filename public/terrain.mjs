@@ -1,5 +1,5 @@
-import { spanAt } from './world.mjs';
-import { TERRAIN_ITERATIONS } from './physics.mjs';
+import { spanAt } from "./world.mjs";
+import { TERRAIN_ITERATIONS } from "./physics.mjs";
 
 const vertex = `#version 300 es
 in vec2 position;
@@ -100,7 +100,7 @@ export class Terrain {
   constructor(canvas, onNotice) {
     this.canvas = canvas;
     this.onNotice = onNotice;
-    this.gl = canvas.getContext('webgl2', {
+    this.gl = canvas.getContext("webgl2", {
       antialias: false,
       alpha: false,
       depth: false,
@@ -111,22 +111,22 @@ export class Terrain {
     if (this.gl) {
       try {
         this.initialize();
-        this.mode = 'webgl2';
+        this.mode = "webgl2";
       } catch (error) {
-        console.warn('GPU terrain unavailable:', error.message);
+        console.warn("GPU terrain unavailable:", error.message);
         this.useFallback();
       }
-      canvas.addEventListener('webglcontextlost', (event) => {
+      canvas.addEventListener("webglcontextlost", (event) => {
         event.preventDefault();
         this.last = null;
-        onNotice('Graphics paused. Waiting for the terrain to return.');
+        onNotice("Graphics paused. Waiting for the terrain to return.");
         this.lost = true;
       });
-      canvas.addEventListener('webglcontextrestored', () => {
+      canvas.addEventListener("webglcontextrestored", () => {
         this.lost = false;
         this.initialize();
         this.last = null;
-        onNotice('');
+        onNotice("");
       });
     } else this.useFallback();
   }
@@ -143,7 +143,7 @@ export class Terrain {
     this.program = gl.createProgram();
     gl.attachShader(this.program, vs);
     gl.attachShader(this.program, fs);
-    gl.bindAttribLocation(this.program, 0, 'position');
+    gl.bindAttribLocation(this.program, 0, "position");
     gl.linkProgram(this.program);
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS))
       throw new Error(
@@ -163,29 +163,29 @@ export class Terrain {
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     this.uniforms = Object.fromEntries(
       [
-        'resolution',
-        'centerHi',
-        'centerLo',
-        'span',
-        'iterations',
-        'deep',
-        'roundMask',
+        "resolution",
+        "centerHi",
+        "centerLo",
+        "span",
+        "iterations",
+        "deep",
+        "roundMask",
       ].map((name) => [name, gl.getUniformLocation(this.program, name)]),
     );
   }
   useFallback() {
-    this.mode = 'cpu';
+    this.mode = "cpu";
     // A canvas that requested WebGL cannot also provide a 2D context.
-    const replacement = document.createElement('canvas');
+    const replacement = document.createElement("canvas");
     replacement.id = this.canvas.id;
-    replacement.setAttribute('aria-label', 'Mandelbrot terrain');
+    replacement.setAttribute("aria-label", "Mandelbrot terrain");
     this.canvas.replaceWith(replacement);
     this.canvas = replacement;
-    this.ctx = replacement.getContext('2d');
-    this.buffer = document.createElement('canvas');
-    this.bufferCtx = this.buffer.getContext('2d');
-    this.worker = new Worker('/terrain-worker.mjs', { type: 'module' });
-    this.worker.addEventListener('message', (event) => {
+    this.ctx = replacement.getContext("2d");
+    this.buffer = document.createElement("canvas");
+    this.bufferCtx = this.buffer.getContext("2d");
+    this.worker = new Worker("/terrain-worker.mjs", { type: "module" });
+    this.worker.addEventListener("message", (event) => {
       const { width, height, pixels, camera } = event.data;
       this.buffer.width = width;
       this.buffer.height = height;
@@ -204,10 +204,10 @@ export class Terrain {
         this.draw(pending);
       }
     });
-    this.worker.addEventListener('error', () =>
-      this.onNotice('The terrain could not load. Reload to try again.'),
+    this.worker.addEventListener("error", () =>
+      this.onNotice("The terrain could not load. Reload to try again."),
     );
-    this.onNotice('Using a lighter terrain renderer on this device.');
+    this.onNotice("Using a lighter terrain renderer on this device.");
   }
   resize(width, height) {
     this.width = width;
@@ -219,7 +219,7 @@ export class Terrain {
   }
   reproject(camera) {
     this.currentCamera = { ...camera };
-    if (this.mode !== 'cpu' || !this.bufferCamera) return;
+    if (this.mode !== "cpu" || !this.bufferCamera) return;
     const span = spanAt(camera.depth);
     const height =
       (this.canvas.height * spanAt(this.bufferCamera.depth)) / span;
@@ -230,7 +230,7 @@ export class Terrain {
     const y =
       this.canvas.height / 2 -
       ((this.bufferCamera.y - camera.y) * this.canvas.height) / span;
-    this.ctx.fillStyle = '#102d30';
+    this.ctx.fillStyle = "#102d30";
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     this.ctx.imageSmoothingEnabled = true;
     this.ctx.drawImage(
@@ -253,7 +253,7 @@ export class Terrain {
     )
       return;
     const max = TERRAIN_ITERATIONS;
-    if (this.gl && this.mode === 'webgl2') {
+    if (this.gl && this.mode === "webgl2") {
       const gl = this.gl,
         u = this.uniforms;
       gl.viewport(0, 0, this.canvas.width, this.canvas.height);

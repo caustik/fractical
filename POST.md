@@ -8,11 +8,11 @@ You can meet other explorers in real time and assemble your own structures from 
 
 Source: **[caustik/fractical](https://github.com/caustik/fractical)**
 
-It runs locally with Node.js 22 or newer. Clone the repository, then run:
+It runs locally with Node.js 22.12 or newer. Clone the repository, then run:
 
 ```sh
 npm ci --ignore-scripts
-npm start
+npm run dev
 ```
 
 Open `http://127.0.0.1:4173` in your browser. The README explains how to connect another computer or phone on your network. Everyone in a playtest connects to the same server. Self-hosting instructions and a Dockerfile are included if you want to deploy your own instance.

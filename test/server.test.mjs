@@ -116,6 +116,33 @@ async function explorer(app, name, room = "test-expedition", extras = {}) {
     },
   };
 }
+// A refused join reports its reason and closes without waiting for the join
+// timeout.
+async function refusedJoin(app, room) {
+  const socket = new WebSocket(app.url.replace("http:", "ws:") + "/live");
+  const messages = [];
+  socket.on("message", (data) => messages.push(JSON.parse(data)));
+  const closed = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.terminate();
+      reject(new Error("The refused join was not closed promptly"));
+    }, 3000);
+    socket.once("close", (code, reason) => {
+      clearTimeout(timer);
+      resolve({
+        code,
+        reason: reason.toString(),
+        error: messages.find((message) => message.type === "error")?.message,
+      });
+    });
+  });
+  await new Promise((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
+  socket.send(JSON.stringify({ type: "join", room, ...HOME }));
+  return closed;
+}
 
 test("world coordinates remain finite, bounded, and recover from malformed links", () => {
   assert.equal(validPosition(HOME), true);
@@ -638,4 +665,63 @@ test("a failed move reserves both footprints while saving and restores only the 
     b.messages.some((m) => m.type === "blocks"),
     false,
   );
+});
+
+test("unreadable world files are set aside and their expeditions open empty", async (t) => {
+  const { app, dir } = await setup(t);
+  const files = {
+    "corrupt-room": "{ not json",
+    "null-room": "null",
+    "future-room": JSON.stringify({ version: "mandelbrot-v2", blocks: [] }),
+  };
+  for (const [room, contents] of Object.entries(files)) {
+    await writeFile(path.join(dir, `${room}.json`), contents);
+    const a = await builder(app, "Ada", room);
+    assert.deepEqual(a.welcome.blocks, []);
+    const kept = (await readdir(dir)).filter((file) =>
+      file.startsWith(`${room}.json.unreadable-`),
+    );
+    assert.equal(kept.length, 1);
+    assert.equal(await readFile(path.join(dir, kept[0]), "utf8"), contents);
+    a.send({ ...place(), requestId: "fresh" });
+    await a.wait(
+      (message) => message.type === "blocks" && message.requestId === "fresh",
+    );
+    const saved = JSON.parse(
+      await readFile(path.join(dir, `${room}.json`), "utf8"),
+    );
+    assert.equal(saved.version, WORLD_VERSION);
+    assert.equal(saved.blocks.length, 1);
+    a.socket.close();
+  }
+});
+
+test("an expedition that cannot be read refuses joins and keeps its file", async (t) => {
+  const { app, dir } = await setup(t);
+  await mkdir(path.join(dir, "locked-room.json"));
+  assert.deepEqual(await refusedJoin(app, "locked-room"), {
+    code: 1008,
+    reason: "Expedition unavailable",
+    error: "This expedition could not be opened. Try again later.",
+  });
+  assert.deepEqual(
+    (await readdir(dir)).filter((file) => file.startsWith("locked-room")),
+    ["locked-room.json"],
+  );
+  assert.equal(app.rooms.has("locked-room"), false);
+});
+
+test("a server at its expedition limit refuses new expeditions", async (t) => {
+  const { app } = await setup(t);
+  await Promise.all(
+    Array.from({ length: 128 }, (_, index) =>
+      explorer(app, "Ada", `room-${index}`),
+    ),
+  );
+  assert.deepEqual(await refusedJoin(app, "one-more-room"), {
+    code: 1008,
+    reason: "Server full",
+    error: "This server has reached its expedition limit. Try again later.",
+  });
+  assert.equal(app.rooms.size, 128);
 });

@@ -58,6 +58,46 @@ const MAX_ROOMS = 128;
 const SIGNAL_HISTORY = 60;
 const RESUME_TTL = 10 * 60_000;
 
+function parseWorld(text) {
+  const stored = JSON.parse(text);
+  if (
+    !stored ||
+    typeof stored !== "object" ||
+    stored.version !== WORLD_VERSION ||
+    ![stored.blocks, stored.marks, stored.legacyMarks].some(Array.isArray)
+  )
+    throw new Error("Unrecognized world file.");
+  const blocks = (Array.isArray(stored.blocks) ? stored.blocks : [])
+    .filter(
+      (block) =>
+        validCell(block) &&
+        typeof block.material === "string" &&
+        Object.hasOwn(MATERIALS, block.material) &&
+        typeof block.id === "string" &&
+        /^[0-9a-f-]{36}$/.test(block.id) &&
+        typeof block.owner === "string" &&
+        /^[0-9a-f]{64}$/.test(block.owner),
+    )
+    .slice(-MAX_BLOCKS)
+    .map(({ id, ix, iy, depth, material, owner, created }) => ({
+      id,
+      ix,
+      iy,
+      depth,
+      material,
+      owner,
+      created: Number.isFinite(created) ? created : 0,
+      ...blockPosition({ ix, iy, depth }),
+    }));
+  // Keep old marker records on disk without exposing their free-form text.
+  const legacyMarks = Array.isArray(stored.legacyMarks)
+    ? stored.legacyMarks
+    : Array.isArray(stored.marks)
+      ? stored.marks
+      : [];
+  return { blocks, legacyMarks };
+}
+
 export async function createFracticalServer({
   dataDir = path.join(ROOT, ".local"),
   host = "127.0.0.1",
@@ -70,54 +110,39 @@ export async function createFracticalServer({
   const sessions = new Map();
   const collider = new FractalCollider({ maxCells: 120000 });
   const hashToken = (token) => createHash("sha256").update(token).digest("hex");
+  // A missing file is a new world. A file that cannot be understood is set
+  // aside for manual recovery, so its expedition opens empty instead of
+  // failing every join. Read errors may be temporary and leave the file alone.
+  async function readWorld(name) {
+    const file = path.join(dataDir, `${name}.json`);
+    let text;
+    try {
+      text = await readFile(file, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT") return { blocks: [], legacyMarks: [] };
+      throw error;
+    }
+    try {
+      return parseWorld(text);
+    } catch (error) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const kept = `${file}.unreadable-${stamp}`;
+      await rename(file, kept);
+      console.warn(
+        `Expedition ${name}: set aside an unreadable world file as ${path.basename(kept)} (${error.message})`,
+      );
+      return { blocks: [], legacyMarks: [] };
+    }
+  }
   async function getRoom(name) {
     if (rooms.has(name)) return rooms.get(name);
     if (loading.has(name)) return loading.get(name);
     if (rooms.size + loading.size >= MAX_ROOMS)
-      throw new Error("The server has reached its room limit.");
+      throw Object.assign(new Error("The server has reached its room limit."), {
+        code: "ROOM_LIMIT",
+      });
     const pending = (async () => {
-      let blocks = [],
-        legacyMarks = [];
-      try {
-        const stored = JSON.parse(
-          await readFile(path.join(dataDir, `${name}.json`), "utf8"),
-        );
-        if (
-          stored.version !== WORLD_VERSION ||
-          ![stored.blocks, stored.marks, stored.legacyMarks].some(Array.isArray)
-        )
-          throw new Error("Unrecognized world file.");
-        blocks = (Array.isArray(stored.blocks) ? stored.blocks : [])
-          .filter(
-            (block) =>
-              validCell(block) &&
-              typeof block.material === "string" &&
-              Object.hasOwn(MATERIALS, block.material) &&
-              typeof block.id === "string" &&
-              /^[0-9a-f-]{36}$/.test(block.id) &&
-              typeof block.owner === "string" &&
-              /^[0-9a-f]{64}$/.test(block.owner),
-          )
-          .slice(-MAX_BLOCKS)
-          .map(({ id, ix, iy, depth, material, owner, created }) => ({
-            id,
-            ix,
-            iy,
-            depth,
-            material,
-            owner,
-            created: Number.isFinite(created) ? created : 0,
-            ...blockPosition({ ix, iy, depth }),
-          }));
-        // Keep old marker records on disk without exposing their free-form text.
-        legacyMarks = Array.isArray(stored.legacyMarks)
-          ? stored.legacyMarks
-          : Array.isArray(stored.marks)
-            ? stored.marks
-            : [];
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-      }
+      const { blocks, legacyMarks } = await readWorld(name);
       const room = {
         name,
         blocks,
@@ -336,6 +361,11 @@ export async function createFracticalServer({
       if (!player) socket.close(1008, "Join an expedition first.");
     }, 10_000);
     joinTimeout.unref();
+    // A refused join says why and closes without waiting for the join timeout.
+    const refuse = (message, reason) => {
+      errorMessage(socket, message);
+      socket.close(1008, reason);
+    };
     socket.on("message", (buffer, binary) => {
       if (binary) {
         socket.close(1003, "Text messages only.");
@@ -373,14 +403,30 @@ export async function createFracticalServer({
             }
             joining = true;
             try {
-              room = await getRoom(name);
-              if (socket.readyState !== WebSocket.OPEN) return;
+              room = await getRoom(name).catch((error) => {
+                if (error.code === "ROOM_LIMIT")
+                  refuse(
+                    "This server has reached its expedition limit. Try again later.",
+                    "Server full",
+                  );
+                else {
+                  console.error(
+                    `Could not open expedition ${name}:`,
+                    error.message,
+                  );
+                  refuse(
+                    "This expedition could not be opened. Try again later.",
+                    "Expedition unavailable",
+                  );
+                }
+                return null;
+              });
+              if (!room || socket.readyState !== WebSocket.OPEN) return;
               if (room.players.size >= MAX_PLAYERS) {
-                errorMessage(
-                  socket,
+                refuse(
                   `This expedition is full (${MAX_PLAYERS} explorers).`,
+                  "Room full",
                 );
-                socket.close(1008, "Room full");
                 return;
               }
               const token =
@@ -404,11 +450,10 @@ export async function createFracticalServer({
                   room.collider,
                 ) || findClearSpawn(HOME, room.collider);
               if (!position) {
-                errorMessage(
-                  socket,
+                refuse(
                   "There is no clear arrival space in this expedition.",
+                  "No arrival space",
                 );
-                socket.close(1008, "No arrival space");
                 return;
               }
               player = {

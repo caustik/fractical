@@ -459,7 +459,9 @@ function connect() {
       return;
     }
     if (event.code === 1008) {
-      addSystem(`Connection paused: ${event.reason}. Reload to retry.`);
+      addSystem(
+        `Connection paused: ${event.reason.replace(/\.$/, "")}. Reload to retry.`,
+      );
       return;
     }
     reconnectCount++;
