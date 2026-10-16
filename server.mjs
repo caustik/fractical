@@ -55,6 +55,8 @@ const MIME = {
   ".svg": "image/svg+xml",
 };
 const MAX_PLAYERS = 32;
+const MAX_ROOMS = 128;
+const SIGNAL_HISTORY = 60;
 const RESUME_TTL = 10 * 60_000;
 
 export async function createFracticalServer({
@@ -72,7 +74,7 @@ export async function createFracticalServer({
   async function getRoom(name) {
     if (rooms.has(name)) return rooms.get(name);
     if (loading.has(name)) return loading.get(name);
-    if (rooms.size + loading.size >= 128)
+    if (rooms.size + loading.size >= MAX_ROOMS)
       throw new Error("The server has reached its room limit.");
     const pending = (async () => {
       let blocks = [],
@@ -124,6 +126,7 @@ export async function createFracticalServer({
         collider: new WorldCollider(collider, blocks),
         players: new Map(),
         signals: [],
+        mutation: Promise.resolve(),
         saving: Promise.resolve(),
         dirty: true,
         lastUsed: Date.now(),
@@ -162,6 +165,36 @@ export async function createFracticalServer({
     room.saving = operation.catch(() => {});
     return operation;
   }
+  // Room edits are serialized across sockets, so simultaneous edits cannot
+  // overwrite each other.
+  function mutate(room, task) {
+    room.mutation = room.mutation.catch(() => {}).then(task);
+    return room.mutation;
+  }
+  // Reserve footprints while saving so another explorer cannot walk into a
+  // block between validation and its publication. A failed write restores the
+  // published blocks.
+  async function commitBlocks(room, next, reserved) {
+    room.collider.setBlocks(reserved);
+    try {
+      await persist(room, next);
+    } catch (error) {
+      room.collider.setBlocks(room.blocks);
+      throw error;
+    }
+    room.blocks = next;
+    room.collider.setBlocks(next);
+  }
+  // A reconnect within the resume window keeps its explorer ID and signal
+  // cooldown.
+  function rememberSession(player, room) {
+    sessions.set(player.tokenHash, {
+      id: player.id,
+      room,
+      expires: Date.now() + RESUME_TTL,
+      lastSignalAt: sessions.get(player.tokenHash)?.lastSignalAt || 0,
+    });
+  }
   const send = (socket, message) => {
     if (socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 256_000)
       socket.send(JSON.stringify(message));
@@ -180,6 +213,15 @@ export async function createFracticalServer({
     moving: player.moving,
     updated: player.updated,
   });
+  const publicPlayers = (room) => [...room.players.values()].map(publicPlayer);
+  const broadcastPlayers = (room) =>
+    broadcast(room, {
+      type: "players",
+      players: publicPlayers(room),
+      at: Date.now(),
+    });
+  const correctPosition = ({ socket, x, y, depth }) =>
+    send(socket, { type: "position", x, y, depth });
   const errorMessage = (socket, message, requestId) =>
     send(socket, { type: "error", message, requestId });
 
@@ -316,6 +358,7 @@ export async function createFracticalServer({
         return;
       }
       if (!message || typeof message !== "object") return;
+      const reject = (text) => errorMessage(socket, text, message.requestId);
       queue = queue
         .then(async () => {
           if (socket.readyState !== WebSocket.OPEN) return;
@@ -334,24 +377,25 @@ export async function createFracticalServer({
               room = await getRoom(name);
               if (socket.readyState !== WebSocket.OPEN) return;
               if (room.players.size >= MAX_PLAYERS) {
-                errorMessage(socket, "This expedition is full (32 explorers).");
+                errorMessage(
+                  socket,
+                  `This expedition is full (${MAX_PLAYERS} explorers).`,
+                );
                 socket.close(1008, "Room full");
                 return;
               }
-              const resume =
-                typeof message.token === "string" && message.token.length === 48
-                  ? sessions.get(hashToken(message.token))
-                  : null;
-              const reusable =
-                resume &&
-                resume.room === name &&
-                resume.expires > Date.now() &&
-                !room.players.has(resume.id);
               const token =
                 typeof message.token === "string" &&
                 /^[0-9a-f]{48}$/.test(message.token)
                   ? message.token
                   : randomBytes(24).toString("hex");
+              const tokenHash = hashToken(token);
+              const resume = sessions.get(tokenHash);
+              const reusable =
+                resume &&
+                resume.room === name &&
+                resume.expires > Date.now() &&
+                !room.players.has(resume.id);
               const color = COLORS.includes(message.color)
                 ? message.color
                 : COLORS[room.players.size % COLORS.length];
@@ -370,7 +414,7 @@ export async function createFracticalServer({
               }
               player = {
                 id: reusable ? resume.id : randomUUID(),
-                name: explorerName(hashToken(token)),
+                name: explorerName(tokenHash),
                 color,
                 x: position.x,
                 y: position.y,
@@ -379,14 +423,9 @@ export async function createFracticalServer({
                 moving: false,
                 updated: Date.now(),
                 socket,
-                tokenHash: hashToken(token),
+                tokenHash,
               };
-              sessions.set(player.tokenHash, {
-                id: player.id,
-                room: name,
-                expires: Date.now() + RESUME_TTL,
-                lastSignalAt: resume?.lastSignalAt || 0,
-              });
+              rememberSession(player, name);
               room.players.set(player.id, player);
               room.lastUsed = Date.now();
               room.dirty = true;
@@ -397,7 +436,7 @@ export async function createFracticalServer({
                 token,
                 worldVersion: WORLD_VERSION,
                 room: name,
-                players: [...room.players.values()].map(publicPlayer),
+                players: publicPlayers(room),
                 blocks: publicBlocks(room, player),
                 signals: room.signals,
                 maxPlayers: MAX_PLAYERS,
@@ -441,12 +480,7 @@ export async function createFracticalServer({
                 bodyRadiusAt(player.depth) * 0.005 ||
               Math.abs(player.depth - message.depth) > 0.0001
             )
-              send(socket, {
-                type: "position",
-                x: player.x,
-                y: player.y,
-                depth: player.depth,
-              });
+              correctPosition(player);
             player.heading = motion.heading;
             player.moving = motion.moving;
             player.updated = Date.now();
@@ -458,20 +492,10 @@ export async function createFracticalServer({
               player.moving = false;
               player.updated = Date.now();
               room.dirty = true;
-            } else
-              send(socket, {
-                type: "position",
-                x: player.x,
-                y: player.y,
-                depth: player.depth,
-              });
+            } else correctPosition(player);
           } else if (message.type === "profile") {
             if (COLORS.includes(message.color)) player.color = message.color;
-            broadcast(room, {
-              type: "players",
-              players: [...room.players.values()].map(publicPlayer),
-              at: Date.now(),
-            });
+            broadcastPlayers(room);
           } else if (message.type === "chat") {
             errorMessage(socket, "Use a preset signal.");
           } else if (message.type === "signal" || message.type === "wave") {
@@ -498,37 +522,21 @@ export async function createFracticalServer({
               at: Date.now(),
             };
             room.signals.push(sent);
-            room.signals = room.signals.slice(-60);
+            room.signals = room.signals.slice(-SIGNAL_HISTORY);
             broadcast(room, { type: "signal", message: sent });
           } else if (message.type === "place-block") {
             if (
               typeof message.material !== "string" ||
               !Object.hasOwn(MATERIALS, message.material) ||
               !validCell(message)
-            ) {
-              errorMessage(
-                socket,
-                "Choose a block material and a valid cell.",
-                message.requestId,
+            )
+              return reject("Choose a block material and a valid cell.");
+            if (Date.now() - lastBuild < BLOCK_COOLDOWN_MS)
+              return reject("Wait a moment before placing another block.");
+            if (room.blocks.length >= MAX_BLOCKS)
+              return reject(
+                `This expedition has ${MAX_BLOCKS.toLocaleString("en-US")} blocks. Remove one of yours to make room.`,
               );
-              return;
-            }
-            if (Date.now() - lastBuild < BLOCK_COOLDOWN_MS) {
-              errorMessage(
-                socket,
-                "Wait a moment before placing another block.",
-                message.requestId,
-              );
-              return;
-            }
-            if (room.blocks.length >= MAX_BLOCKS) {
-              errorMessage(
-                socket,
-                "This expedition has 1,024 blocks. Remove one of yours to make room.",
-                message.requestId,
-              );
-              return;
-            }
             lastBuild = Date.now();
             const block = {
               id: randomUUID(),
@@ -540,168 +548,78 @@ export async function createFracticalServer({
               owner: player.tokenHash,
               created: Date.now(),
             };
-            // Room operations are serialized across sockets, so simultaneous edits cannot overwrite each other.
-            const operation = room.mutation || Promise.resolve();
-            const mutation = operation
-              .catch(() => {})
-              .then(async () => {
-                if (room.blocks.length >= MAX_BLOCKS) {
-                  errorMessage(
-                    socket,
-                    "This expedition has reached its block limit.",
-                    message.requestId,
-                  );
-                  return;
-                }
-                const problem = placementProblem(
-                  block,
-                  player,
-                  [...room.players.values()],
-                  room.blocks,
-                  collider,
-                );
-                if (problem) {
-                  errorMessage(socket, problem, message.requestId);
-                  return;
-                }
-                const next = [...room.blocks, block];
-                // Reserve the cell while saving so another explorer cannot walk
-                // into a block between validation and its publication.
-                room.collider.setBlocks(next);
-                try {
-                  await persist(room, next);
-                } catch (error) {
-                  room.collider.setBlocks(room.blocks);
-                  throw error;
-                }
-                room.blocks = next;
-                broadcastBlocks(room, message.requestId, player.id);
-              });
-            room.mutation = mutation;
-            await mutation;
+            await mutate(room, async () => {
+              if (room.blocks.length >= MAX_BLOCKS)
+                return reject("This expedition has reached its block limit.");
+              const problem = placementProblem(
+                block,
+                player,
+                [...room.players.values()],
+                room.blocks,
+                collider,
+              );
+              if (problem) return reject(problem);
+              const next = [...room.blocks, block];
+              await commitBlocks(room, next, next);
+              broadcastBlocks(room, message.requestId, player.id);
+            });
           } else if (message.type === "move-block") {
-            if (!validCell(message) || !validCell(message.from)) {
-              errorMessage(
-                socket,
-                "Choose a valid square and destination.",
-                message.requestId,
-              );
-              return;
-            }
-            if (Date.now() - lastBuild < BLOCK_COOLDOWN_MS) {
-              errorMessage(
-                socket,
-                "Wait a moment before moving another square.",
-                message.requestId,
-              );
-              return;
-            }
+            if (!validCell(message) || !validCell(message.from))
+              return reject("Choose a valid square and destination.");
+            if (Date.now() - lastBuild < BLOCK_COOLDOWN_MS)
+              return reject("Wait a moment before moving another square.");
             lastBuild = Date.now();
-            const operation = room.mutation || Promise.resolve();
-            const mutation = operation
-              .catch(() => {})
-              .then(async () => {
-                const block = room.blocks.find(
-                  (item) => item.id === message.id,
-                );
-                if (!block || !equalHashes(block.owner, player.tokenHash)) {
-                  errorMessage(
-                    socket,
-                    "You can only move your own squares.",
-                    message.requestId,
-                  );
-                  return;
-                }
-                if (
-                  ["ix", "iy", "depth"].some(
-                    (key) => block[key] !== message.from[key],
-                  )
-                ) {
-                  errorMessage(
-                    socket,
-                    "That square has changed. Pick it up again.",
-                    message.requestId,
-                  );
-                  return;
-                }
-                const problem = movementProblem(
-                  block,
-                  message,
-                  player,
-                  [...room.players.values()],
-                  room.blocks,
-                  collider,
-                );
-                if (problem) {
-                  errorMessage(socket, problem, message.requestId);
-                  return;
-                }
-                const moved = {
-                  ...block,
-                  ix: message.ix,
-                  iy: message.iy,
-                  ...blockPosition(message),
-                };
-                const next = room.blocks.map((item) =>
-                  item.id === block.id ? moved : item,
-                );
-                // Keep both footprints solid until the save succeeds. A failed
-                // write must not restore the old square on top of an explorer.
-                room.collider.setBlocks([...room.blocks, moved]);
-                try {
-                  await persist(room, next);
-                } catch (error) {
-                  room.collider.setBlocks(room.blocks);
-                  throw error;
-                }
-                room.blocks = next;
-                room.collider.setBlocks(next);
-                broadcastBlocks(room, message.requestId, player.id);
-              });
-            room.mutation = mutation;
-            await mutation;
+            await mutate(room, async () => {
+              const block = room.blocks.find((item) => item.id === message.id);
+              if (!block || !equalHashes(block.owner, player.tokenHash))
+                return reject("You can only move your own squares.");
+              if (
+                ["ix", "iy", "depth"].some(
+                  (key) => block[key] !== message.from[key],
+                )
+              )
+                return reject("That square has changed. Pick it up again.");
+              const problem = movementProblem(
+                block,
+                message,
+                player,
+                [...room.players.values()],
+                room.blocks,
+                collider,
+              );
+              if (problem) return reject(problem);
+              const moved = {
+                ...block,
+                ix: message.ix,
+                iy: message.iy,
+                ...blockPosition(message),
+              };
+              const next = room.blocks.map((item) =>
+                item.id === block.id ? moved : item,
+              );
+              // Keep both footprints solid until the save succeeds. A failed
+              // write must not restore the old square on top of an explorer.
+              await commitBlocks(room, next, [...room.blocks, moved]);
+              broadcastBlocks(room, message.requestId, player.id);
+            });
           } else if (message.type === "remove-block") {
-            const operation = room.mutation || Promise.resolve();
-            const mutation = operation
-              .catch(() => {})
-              .then(async () => {
-                const block = room.blocks.find(
-                  (item) => item.id === message.id,
-                );
-                if (!block || !equalHashes(block.owner, player.tokenHash)) {
-                  errorMessage(
-                    socket,
-                    "You can only remove your own blocks.",
-                    message.requestId,
-                  );
-                  return;
-                }
-                if (!withinBuildReach(block, player)) {
-                  errorMessage(
-                    socket,
-                    "Walk closer. Remove blocks at their own scale.",
-                    message.requestId,
-                  );
-                  return;
-                }
-                const next = room.blocks.filter((item) => item.id !== block.id);
-                await persist(room, next);
-                room.blocks = next;
-                room.collider.setBlocks(next);
-                broadcastBlocks(room, message.requestId, player.id);
-              });
-            room.mutation = mutation;
-            await mutation;
+            await mutate(room, async () => {
+              const block = room.blocks.find((item) => item.id === message.id);
+              if (!block || !equalHashes(block.owner, player.tokenHash))
+                return reject("You can only remove your own blocks.");
+              if (!withinBuildReach(block, player))
+                return reject("Walk closer. Remove blocks at their own scale.");
+              const next = room.blocks.filter((item) => item.id !== block.id);
+              // The removed block stays solid until the save succeeds.
+              await commitBlocks(room, next, room.blocks);
+              broadcastBlocks(room, message.requestId, player.id);
+            });
           } else if (message.type === "ping")
             send(socket, { type: "pong", at: message.at });
         })
         .catch((error) => {
           console.error("Room operation failed:", error.message);
-          errorMessage(
-            socket,
-            "The server could not save that change. Try again.",
-            message.requestId,
-          );
+          reject("The server could not save that change. Try again.");
         });
     });
     socket.on("close", () => {
@@ -709,12 +627,7 @@ export async function createFracticalServer({
       if (player && room) {
         room.players.delete(player.id);
         room.dirty = true;
-        sessions.set(player.tokenHash, {
-          id: player.id,
-          room: room.name,
-          expires: Date.now() + RESUME_TTL,
-          lastSignalAt: sessions.get(player.tokenHash)?.lastSignalAt || 0,
-        });
+        rememberSession(player, room.name);
         broadcast(room, { type: "departure", id: player.id });
       }
     });
@@ -745,11 +658,7 @@ export async function createFracticalServer({
   const snapshots = setInterval(() => {
     for (const room of rooms.values()) {
       if (room.players.size && room.dirty) {
-        broadcast(room, {
-          type: "players",
-          players: [...room.players.values()].map(publicPlayer),
-          at: Date.now(),
-        });
+        broadcastPlayers(room);
         room.dirty = false;
       }
     }
@@ -793,7 +702,7 @@ export async function createFracticalServer({
       clearInterval(heartbeat);
       for (const socket of wss.clients) socket.terminate();
       await Promise.allSettled(
-        [...rooms.values()].map((room) => room.mutation || room.saving),
+        [...rooms.values()].map((room) => room.mutation),
       );
       await new Promise((resolve) => wss.close(resolve));
       server.closeAllConnections();
