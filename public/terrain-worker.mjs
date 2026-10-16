@@ -1,4 +1,4 @@
-import { escapeIterations } from './world.mjs';
+import { escapeIterations } from './physics.mjs';
 
 // The light renderer stays off the interaction thread, including at deep zoom.
 self.addEventListener('message', (event) => {

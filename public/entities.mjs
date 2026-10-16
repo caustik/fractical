@@ -30,6 +30,26 @@ export class Entities {
       y: this.height / 2 - (position.y - camera.y) * scale,
     };
   }
+  // The inverse of point(): a canvas position in world coordinates.
+  worldAt(x, y, camera) {
+    const span = spanAt(camera.depth);
+    return {
+      x: camera.x + ((x - this.width / 2) / this.height) * span,
+      y: camera.y - ((y - this.height / 2) / this.height) * span,
+    };
+  }
+  // A world length in canvas pixels at the camera's scale.
+  pixels(length, camera) {
+    return (length / spanAt(camera.depth)) * this.height;
+  }
+  offscreen(p, margin = 60) {
+    return (
+      p.x < -margin ||
+      p.y < -margin ||
+      p.x > this.width + margin ||
+      p.y > this.height + margin
+    );
+  }
   hit(x, y) {
     return this.hitAreas
       .slice()
@@ -43,35 +63,27 @@ export class Entities {
           : Math.hypot(x - area.x, y - area.y) < area.radius,
       );
   }
-  draw({
-    camera,
-    me,
-    others,
-    blocks,
-    waves,
-    bubbles,
-    destination,
-    time,
-    reduceMotion,
-    physicsState,
-    buildPreview,
-  }) {
-    const ctx = this.ctx;
-    ctx.clearRect(0, 0, this.width, this.height);
+  // Layers draw back to front. Later hit areas take precedence in hit().
+  draw(scene) {
+    const { camera, me } = scene;
+    this.ctx.clearRect(0, 0, this.width, this.height);
     this.hitAreas = [];
     const myPoint = this.point(me, camera);
-    const crowd = others
-      .filter((player) => {
-        const p = this.point(player, camera);
-        return (
-          Math.hypot(p.x - myPoint.x, p.y - myPoint.y) < 38 &&
-          Math.abs(player.depth - me.depth) < 2
-        );
-      })
-      .sort((a, b) => a.id.localeCompare(b.id));
-    // A subtle survey grid uses world coordinates so it moves with the coast.
+    this.drawGrid(camera);
+    this.drawPlaces(scene, myPoint);
+    this.drawTrails(scene);
+    if (scene.destination) this.drawDestination(scene, myPoint);
+    this.drawPassage(camera, myPoint);
+    if (scene.buildPreview) this.drawBuildGrid(scene, myPoint);
+    this.drawBlocks(scene);
+    if (scene.buildPreview?.cell) this.drawPreview(scene);
+    this.drawPlayers(scene, myPoint);
+  }
+  // A subtle survey grid uses world coordinates so it moves with the coast.
+  drawGrid(camera) {
+    const ctx = this.ctx;
     const cell = spanAt(Math.floor(camera.depth)) / 4;
-    const spacing = (cell / spanAt(camera.depth)) * this.height;
+    const spacing = this.pixels(cell, camera);
     const startX = this.width / 2 - ((camera.x % cell) / cell) * spacing;
     const startY = this.height / 2 + ((camera.y % cell) / cell) * spacing;
     ctx.strokeStyle = "#dbe6c50c";
@@ -88,16 +100,13 @@ export class Entities {
       ctx.lineTo(this.width, y);
       ctx.stroke();
     }
+  }
+  drawPlaces({ camera, blocks }, myPoint) {
+    const ctx = this.ctx;
     for (const place of PLACES) {
       const p = this.point(place, camera);
       if (Math.hypot(p.x - myPoint.x, p.y - myPoint.y) < 60) continue;
-      if (
-        p.x < -60 ||
-        p.y < -60 ||
-        p.x > this.width + 60 ||
-        p.y > this.height + 60 ||
-        Math.abs(camera.depth - place.depth) > 2.5
-      )
+      if (this.offscreen(p) || Math.abs(camera.depth - place.depth) > 2.5)
         continue;
       ctx.strokeStyle = "#d8dab565";
       ctx.lineWidth = 1;
@@ -121,6 +130,9 @@ export class Entities {
       )
         this.label(place.name, p.x, p.y + 42, "#bac9ae", 10);
     }
+  }
+  drawTrails({ camera, me, time }) {
+    const ctx = this.ctx;
     if (me.moving && time - (this.lastTrail || 0) > 130) {
       this.trails.push({ x: me.x, y: me.y, depth: me.depth, time });
       this.lastTrail = time;
@@ -136,98 +148,99 @@ export class Entities {
       ctx.arc(p.x, p.y, 1.6, 0, Math.PI * 2);
       ctx.fill();
     }
-    if (destination) {
-      const from = this.point(me, camera),
-        to = this.point(destination, camera);
-      ctx.strokeStyle = "#cbd7ba55";
-      ctx.lineWidth = 0.8;
-      ctx.setLineDash([2, 6]);
-      ctx.beginPath();
-      ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x, to.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.strokeStyle = "#d9dfba88";
-      ctx.beginPath();
-      ctx.arc(to.x, to.y, 7, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(to.x - 12, to.y);
-      ctx.lineTo(to.x + 12, to.y);
-      ctx.moveTo(to.x, to.y - 12);
-      ctx.lineTo(to.x, to.y + 12);
-      ctx.stroke();
-    }
+  }
+  drawDestination({ camera, destination }, from) {
+    const ctx = this.ctx;
+    const to = this.point(destination, camera);
+    ctx.strokeStyle = "#cbd7ba55";
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([2, 6]);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "#d9dfba88";
+    ctx.beginPath();
+    ctx.arc(to.x, to.y, 7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(to.x - 12, to.y);
+    ctx.lineTo(to.x + 12, to.y);
+    ctx.moveTo(to.x, to.y - 12);
+    ctx.lineTo(to.x, to.y + 12);
+    ctx.stroke();
+  }
+  drawPassage(camera, myPoint) {
+    const ctx = this.ctx;
     const passage = this.point(PASSAGE, camera);
-    if (
+    const shown =
       camera.depth < 9 &&
       passage.x > 30 &&
       passage.x < this.width - 30 &&
       passage.y > 110 &&
       passage.y < this.height - 60 &&
-      Math.hypot(passage.x - myPoint.x, passage.y - myPoint.y) > 35
+      Math.hypot(passage.x - myPoint.x, passage.y - myPoint.y) > 35;
+    if (!shown) return;
+    ctx.strokeStyle = "#e7b46dbb";
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.arc(passage.x, passage.y, 12, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    this.label("THE NARROWS", passage.x, passage.y + 27, "#efdbb6", 10);
+    this.label("GO SMALLER TO ENTER", passage.x, passage.y + 40, "#d6cba7", 8);
+    this.hitAreas.push({
+      x: passage.x,
+      y: passage.y,
+      radius: 24,
+      kind: "passage",
+      value: PASSAGE,
+    });
+  }
+  // The placement grid and reach ring show where building is allowed.
+  drawBuildGrid({ camera, me, buildPreview }, myPoint) {
+    const ctx = this.ctx;
+    const level = buildPreview.cell?.depth ?? Math.round(me.depth),
+      size = blockSizeAt(level),
+      pixel = this.pixels(size, camera);
+    const center = cellAt(me, level);
+    ctx.strokeStyle = "#d7e9c930";
+    ctx.lineWidth = 0.7;
+    for (
+      let iy = center.iy - BUILD_REACH;
+      iy <= center.iy + BUILD_REACH;
+      iy++
     ) {
-      ctx.strokeStyle = "#e7b46dbb";
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([3, 4]);
-      ctx.beginPath();
-      ctx.arc(passage.x, passage.y, 12, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      this.label("THE NARROWS", passage.x, passage.y + 27, "#efdbb6", 10);
-      this.label(
-        "GO SMALLER TO ENTER",
-        passage.x,
-        passage.y + 40,
-        "#d6cba7",
-        8,
-      );
-      this.hitAreas.push({
-        x: passage.x,
-        y: passage.y,
-        radius: 24,
-        kind: "passage",
-        value: PASSAGE,
-      });
-    }
-    if (buildPreview) {
-      const level = buildPreview.cell?.depth ?? Math.round(me.depth),
-        size = blockSizeAt(level),
-        pixel = (size / spanAt(camera.depth)) * this.height;
-      const center = cellAt(me, level);
-      ctx.strokeStyle = "#d7e9c930";
-      ctx.lineWidth = 0.7;
       for (
-        let iy = center.iy - BUILD_REACH;
-        iy <= center.iy + BUILD_REACH;
-        iy++
+        let ix = center.ix - BUILD_REACH;
+        ix <= center.ix + BUILD_REACH;
+        ix++
       ) {
-        for (
-          let ix = center.ix - BUILD_REACH;
-          ix <= center.ix + BUILD_REACH;
-          ix++
-        ) {
-          const cell = { ix, iy, depth: level },
-            position = blockPosition(cell);
-          if (
-            Math.hypot(position.x - me.x, position.y - me.y) >
-            size * BUILD_REACH
-          )
-            continue;
-          const p = this.point(position, camera);
-          ctx.strokeRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
-        }
+        const cell = { ix, iy, depth: level },
+          position = blockPosition(cell);
+        if (
+          Math.hypot(position.x - me.x, position.y - me.y) >
+          size * BUILD_REACH
+        )
+          continue;
+        const p = this.point(position, camera);
+        ctx.strokeRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
       }
-      ctx.strokeStyle = "#d7e9c955";
-      ctx.setLineDash([3, 5]);
-      ctx.beginPath();
-      ctx.arc(myPoint.x, myPoint.y, pixel * BUILD_REACH, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
     }
+    ctx.strokeStyle = "#d7e9c955";
+    ctx.setLineDash([3, 5]);
+    ctx.beginPath();
+    ctx.arc(myPoint.x, myPoint.y, pixel * BUILD_REACH, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  drawBlocks({ camera, blocks, buildPreview }) {
+    const ctx = this.ctx;
     for (const block of blocks) {
       const p = this.point(block, camera),
-        pixel = (blockSizeAt(block.depth) / spanAt(camera.depth)) * this.height;
+        pixel = this.pixels(blockSizeAt(block.depth), camera);
       const left = p.x - pixel / 2,
         top = p.y - pixel / 2;
       if (
@@ -287,34 +300,46 @@ export class Entities {
         },
       });
     }
-    if (buildPreview?.cell) {
-      const p = this.point(blockPosition(buildPreview.cell), camera),
-        pixel =
-          (blockSizeAt(buildPreview.cell.depth) / spanAt(camera.depth)) *
-          this.height;
-      ctx.fillStyle = buildPreview.allowed ? "#b8e5be55" : "#f1a28055";
-      ctx.strokeStyle = buildPreview.allowed ? "#d9f3c5" : "#ffc0a0";
-      ctx.lineWidth = 2;
-      ctx.fillRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
-      ctx.strokeRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
-      this.label(
-        !buildPreview.allowed
-          ? "BLOCKED"
-          : buildPreview.moving
-            ? "MOVE"
-            : buildPreview.picking
-              ? "PICK UP"
-              : buildPreview.erase
-                ? "REMOVE"
-                : "PLACE",
-        p.x,
-        p.y - pixel / 2 - 11,
-        ctx.strokeStyle,
-        9,
-      );
-    }
-    const players = [...others, me];
-    for (const player of players) {
+  }
+  drawPreview({ camera, buildPreview }) {
+    const ctx = this.ctx;
+    const p = this.point(blockPosition(buildPreview.cell), camera),
+      pixel = this.pixels(blockSizeAt(buildPreview.cell.depth), camera);
+    ctx.fillStyle = buildPreview.allowed ? "#b8e5be55" : "#f1a28055";
+    ctx.strokeStyle = buildPreview.allowed ? "#d9f3c5" : "#ffc0a0";
+    ctx.lineWidth = 2;
+    ctx.fillRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
+    ctx.strokeRect(p.x - pixel / 2, p.y - pixel / 2, pixel, pixel);
+    this.label(
+      !buildPreview.allowed
+        ? "BLOCKED"
+        : buildPreview.moving
+          ? "MOVE"
+          : buildPreview.picking
+            ? "PICK UP"
+            : buildPreview.erase
+              ? "REMOVE"
+              : "PLACE",
+      p.x,
+      p.y - pixel / 2 - 11,
+      ctx.strokeStyle,
+      9,
+    );
+  }
+  drawPlayers(scene, myPoint) {
+    const { camera, me, others, waves, bubbles, time, physicsState } = scene;
+    const ctx = this.ctx;
+    // Explorers standing close together fan out so each stays readable.
+    const crowd = others
+      .filter((player) => {
+        const p = this.point(player, camera);
+        return (
+          Math.hypot(p.x - myPoint.x, p.y - myPoint.y) < 38 &&
+          Math.abs(player.depth - me.depth) < 2
+        );
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+    for (const player of [...others, me]) {
       const p = this.point(player, camera),
         mine = player.id === me.id,
         difference = camera.depth - player.depth;
@@ -324,15 +349,8 @@ export class Entities {
         p.x += Math.cos(angle) * 29;
         p.y += Math.sin(angle) * 29;
       }
-      if (
-        p.x < -60 ||
-        p.y < -60 ||
-        p.x > this.width + 60 ||
-        p.y > this.height + 60
-      )
-        continue;
-      const physicalRadius =
-        (bodyRadiusAt(player.depth) / spanAt(camera.depth)) * this.height;
+      if (this.offscreen(p)) continue;
+      const physicalRadius = this.pixels(bodyRadiusAt(player.depth), camera);
       const size = mine
         ? physicalRadius / 13
         : Math.min(1.7, Math.max(0.25, physicalRadius / 13));
@@ -353,54 +371,7 @@ export class Entities {
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.scale(size, size);
-      ctx.shadowColor = "#071e24";
-      ctx.shadowBlur = 8;
-      const bob =
-        player.moving && !reduceMotion ? Math.sin(time * 0.016) * 1.7 : 0;
-      ctx.fillStyle = "#04252c66";
-      ctx.beginPath();
-      ctx.ellipse(0, 9, 8, 3.5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // Boots, coat, backpack, and head keep the explorer readable at a human scale.
-      ctx.fillStyle = "#152c2c";
-      ctx.beginPath();
-      ctx.roundRect(-4, 4 + bob, 3, 6, 1);
-      ctx.roundRect(1, 4 - bob, 3, 6, 1);
-      ctx.fill();
-      ctx.fillStyle = player.color;
-      ctx.strokeStyle = "#f1ecc8bb";
-      ctx.lineWidth = 0.8;
-      ctx.beginPath();
-      ctx.roundRect(-6, -5 + bob * 0.35, 12, 13, 4);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#40564a";
-      ctx.beginPath();
-      ctx.roundRect(-4, 0 + bob * 0.35, 8, 6, 2);
-      ctx.fill();
-      ctx.fillStyle = "#ede6c5";
-      ctx.beginPath();
-      ctx.arc(0, -8 + bob * 0.35, 4.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = player.color;
-      ctx.beginPath();
-      ctx.ellipse(0, -9 + bob * 0.35, 5.8, 2.3, 0, 0, Math.PI * 2);
-      ctx.fill();
-      if (player.moving) {
-        ctx.rotate(player.heading);
-        ctx.strokeStyle = player.color;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, -25);
-        ctx.lineTo(-3, -20);
-        ctx.moveTo(0, -25);
-        ctx.lineTo(3, -20);
-        ctx.stroke();
-      }
-      ctx.restore();
+      this.drawExplorer(player, p, size, scene);
       if (mine || crowd.length <= 3 || crowdIndex < 0)
         this.label(
           mine ? "YOU" : player.name,
@@ -438,6 +409,58 @@ export class Entities {
         9,
       );
   }
+  // Boots, coat, backpack, and head keep the explorer readable at a human
+  // scale.
+  drawExplorer(player, p, size, { time, reduceMotion }) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.scale(size, size);
+    ctx.shadowColor = "#071e24";
+    ctx.shadowBlur = 8;
+    const bob =
+      player.moving && !reduceMotion ? Math.sin(time * 0.016) * 1.7 : 0;
+    ctx.fillStyle = "#04252c66";
+    ctx.beginPath();
+    ctx.ellipse(0, 9, 8, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#152c2c";
+    ctx.beginPath();
+    ctx.roundRect(-4, 4 + bob, 3, 6, 1);
+    ctx.roundRect(1, 4 - bob, 3, 6, 1);
+    ctx.fill();
+    ctx.fillStyle = player.color;
+    ctx.strokeStyle = "#f1ecc8bb";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(-6, -5 + bob * 0.35, 12, 13, 4);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#40564a";
+    ctx.beginPath();
+    ctx.roundRect(-4, 0 + bob * 0.35, 8, 6, 2);
+    ctx.fill();
+    ctx.fillStyle = "#ede6c5";
+    ctx.beginPath();
+    ctx.arc(0, -8 + bob * 0.35, 4.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = player.color;
+    ctx.beginPath();
+    ctx.ellipse(0, -9 + bob * 0.35, 5.8, 2.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (player.moving) {
+      ctx.rotate(player.heading);
+      ctx.strokeStyle = player.color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, -25);
+      ctx.lineTo(-3, -20);
+      ctx.moveTo(0, -25);
+      ctx.lineTo(3, -20);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   label(text, x, y, color, size) {
     const ctx = this.ctx;
     ctx.font = `${size}px ${size === 8 ? "Courier New" : "Arial"}`;
@@ -449,11 +472,11 @@ export class Entities {
     ctx.fillText(text, x, y);
     ctx.shadowBlur = 0;
   }
+  // Signal bubbles hold one of the short preset signals.
   speech(text, x, y) {
     const ctx = this.ctx;
     ctx.font = "10px Arial";
-    const shown = text.length > 50 ? text.slice(0, 47) + "…" : text;
-    const width = Math.min(290, ctx.measureText(shown).width + 20);
+    const width = Math.min(290, ctx.measureText(text).width + 20);
     const left = Math.max(8, Math.min(this.width - width - 8, x - width / 2));
     ctx.fillStyle = "#efefdcf0";
     ctx.beginPath();
@@ -462,6 +485,6 @@ export class Entities {
     ctx.fillStyle = "#193637";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(shown, left + width / 2, y - 15);
+    ctx.fillText(text, left + width / 2, y - 15);
   }
 }

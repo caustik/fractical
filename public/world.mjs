@@ -8,7 +8,6 @@ export const PLACES = Object.freeze([
     description:
       "The rock is solid. Walk into the gap, then go smaller to fit.",
     ...HOME,
-    color: "#e7b46d",
   },
   {
     id: "seahorse",
@@ -17,7 +16,6 @@ export const PLACES = Object.freeze([
     x: -0.7435,
     y: 0.1314,
     depth: 8.4,
-    color: "#98d8c3",
   },
   {
     id: "elephant",
@@ -26,7 +24,6 @@ export const PLACES = Object.freeze([
     x: 0.275,
     y: 0.008,
     depth: 6.7,
-    color: "#92baca",
   },
   {
     id: "island",
@@ -35,7 +32,6 @@ export const PLACES = Object.freeze([
     x: -1.754,
     y: 0,
     depth: 5.8,
-    color: "#e7b46d",
   },
 ]);
 export const COLORS = [
@@ -57,6 +53,27 @@ export const SIGNALS = Object.freeze({
 export const SIGNAL_COOLDOWN_MS = 3000;
 export const spanAt = (depth) => 2.8 / 2 ** depth;
 export const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+export const WORLD_BOUNDS = Object.freeze({
+  minX: -3,
+  maxX: 3,
+  minY: -2,
+  maxY: 2,
+});
+export const boundsAround = ({ x, y }, radius = 0) => ({
+  minX: x - radius,
+  maxX: x + radius,
+  minY: y - radius,
+  maxY: y + radius,
+});
+export const insideWorld = (bounds) =>
+  bounds.minX >= WORLD_BOUNDS.minX &&
+  bounds.maxX <= WORLD_BOUNDS.maxX &&
+  bounds.minY >= WORLD_BOUNDS.minY &&
+  bounds.maxY <= WORLD_BOUNDS.maxY;
+export const clampToWorld = ({ x, y }) => ({
+  x: clamp(x, WORLD_BOUNDS.minX, WORLD_BOUNDS.maxX),
+  y: clamp(y, WORLD_BOUNDS.minY, WORLD_BOUNDS.maxY),
+});
 export function validPosition(value) {
   return (
     value &&
@@ -64,8 +81,7 @@ export function validPosition(value) {
     Number.isFinite(value.x) &&
     Number.isFinite(value.y) &&
     Number.isFinite(value.depth) &&
-    Math.abs(value.x) <= 3 &&
-    Math.abs(value.y) <= 2 &&
+    insideWorld(boundsAround(value)) &&
     value.depth >= 0 &&
     value.depth <= MAX_DEPTH
   );
@@ -120,19 +136,4 @@ export function explorerName(seed) {
   ];
   const value = Number.parseInt(seed.slice(0, 8), 16);
   return `${first[value % first.length]} ${second[Math.floor(value / first.length) % second.length]} ${String(Number.parseInt(seed.slice(-6), 16) % 1000).padStart(3, "0")}`;
-}
-export function escapeIterations(x, y, max = 400) {
-  const q = (x - 0.25) ** 2 + y * y;
-  if (q * (q + x - 0.25) <= 0.25 * y * y || (x + 1) ** 2 + y * y <= 0.0625)
-    return max;
-  let zx = 0,
-    zy = 0;
-  for (let i = 0; i < max; i++) {
-    const next = zx * zx - zy * zy + x;
-    zy = 2 * zx * zy + y;
-    zx = next;
-    if (zx * zx + zy * zy > 256)
-      return i + 1 - Math.log2(Math.log2(Math.sqrt(zx * zx + zy * zy)));
-  }
-  return max;
 }

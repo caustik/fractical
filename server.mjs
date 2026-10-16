@@ -29,10 +29,9 @@ import {
 } from "./public/world.mjs";
 import {
   FractalCollider,
+  approachBody,
   bodyRadiusAt,
   findClearSpawn,
-  moveBody,
-  resizeBody,
 } from "./public/physics.mjs";
 import {
   MATERIALS,
@@ -439,8 +438,6 @@ export async function createFracticalServer({
                 players: publicPlayers(room),
                 blocks: publicBlocks(room, player),
                 signals: room.signals,
-                maxPlayers: MAX_PLAYERS,
-                maxBlocks: MAX_BLOCKS,
               });
               broadcast(room, {
                 type: "arrival",
@@ -454,17 +451,7 @@ export async function createFracticalServer({
           if (!player || !room) return;
           room.lastUsed = Date.now();
           if (message.type === "move" && validPosition(message)) {
-            const smaller = resizeBody(
-              player,
-              Math.max(player.depth, message.depth),
-              room.collider,
-            );
-            const moved = moveBody(
-              smaller,
-              { x: message.x - player.x, y: message.y - player.y },
-              room.collider,
-            );
-            const sized = resizeBody(moved, message.depth, room.collider);
+            const sized = approachBody(player, message, room.collider);
             const motion = motionBetween(player, sized);
             motion.moving &&= Boolean(message.moving);
             room.dirty ||=
@@ -498,8 +485,8 @@ export async function createFracticalServer({
             broadcastPlayers(room);
           } else if (message.type === "chat") {
             errorMessage(socket, "Use a preset signal.");
-          } else if (message.type === "signal" || message.type === "wave") {
-            const signal = message.type === "wave" ? "hello" : message.signal;
+          } else if (message.type === "signal") {
+            const { signal } = message;
             if (typeof signal !== "string" || !Object.hasOwn(SIGNALS, signal)) {
               errorMessage(socket, "Choose one of the preset signals.");
               return;

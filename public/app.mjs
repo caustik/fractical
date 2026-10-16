@@ -5,11 +5,13 @@ import {
   MAX_DEPTH,
   spanAt,
   clamp,
+  clampToWorld,
   readPosition,
   roomName,
   motionBetween,
   SIGNALS,
   SIGNAL_COOLDOWN_MS,
+  WORLD_VERSION,
 } from "./world.mjs";
 import { Terrain } from "./terrain.mjs";
 import { Entities } from "./entities.mjs";
@@ -17,6 +19,7 @@ import { FieldSound } from "./sound.mjs";
 import {
   FractalCollider,
   PASSAGE,
+  approachBody,
   bodyRadiusAt,
   findClearSpawn,
   moveBody,
@@ -156,17 +159,29 @@ function toast(message, duration = 3400) {
     $("toast").hidden = true;
   }, duration);
 }
+// Matches the phone layout breakpoint in global.css.
+const isPhone = () => innerWidth <= 700;
+const hideHint = () => {
+  $("intro-hint").hidden = true;
+};
+// Stop walking: held keys, the touch pad, and any click destination.
+function haltMotion() {
+  keys.clear();
+  touchVector = { x: 0, y: 0 };
+  destination = null;
+  me.moving = false;
+}
 function openTab(name, mobileToggle = false) {
   const sidebar = document.querySelector(".fieldnotes");
   if (
     mobileToggle &&
-    innerWidth <= 700 &&
+    isPhone() &&
     document
       .querySelector(`[data-tab="${name}"]`)
       .getAttribute("aria-selected") === "true"
   )
     sidebar.classList.toggle("expanded");
-  else if (innerWidth <= 700) sidebar.classList.add("expanded");
+  else if (isPhone()) sidebar.classList.add("expanded");
   for (const tab of document.querySelectorAll("[data-tab]")) {
     const selected = tab.dataset.tab === name;
     tab.setAttribute("aria-selected", String(selected));
@@ -191,7 +206,7 @@ function stopFollowing(announce = false) {
   followed = null;
   $("follow-banner").hidden = true;
 }
-function go(place, title = place.name || place.label || "An uncharted place") {
+function go(place, title = place.name || "An uncharted place") {
   const landing = findClearSpawn(
     { x: place.x, y: place.y, depth: clamp(place.depth, 0, MAX_DEPTH) },
     collider,
@@ -203,19 +218,14 @@ function go(place, title = place.name || place.label || "An uncharted place") {
   stopFollowing();
   setBuildMode(null);
   buildPointer = null;
-  destination = null;
-  keys.clear();
-  touchVector = { x: 0, y: 0 };
-  Object.assign(me, {
-    ...landing,
-    moving: false,
-  });
+  haltMotion();
+  Object.assign(me, landing);
   // Long-distance travel is a deliberate jump, not a flight through unrelated scales.
   Object.assign(camera, { x: me.x, y: me.y, depth: me.depth });
   terrain.last = null;
   currentPlace = title;
-  $("intro-hint").hidden = true;
-  if (innerWidth <= 700)
+  hideHint();
+  if (isPhone())
     document.querySelector(".fieldnotes").classList.remove("expanded");
   send({ type: "travel", x: me.x, y: me.y, depth: me.depth });
   lastPosition = null;
@@ -256,9 +266,7 @@ $("passage-button").addEventListener("click", () => {
   destination = { x: PASSAGE.x, y: PASSAGE.y };
 });
 $("unfollow-button").addEventListener("click", () => stopFollowing(true));
-$("dismiss-hint").addEventListener("click", () => {
-  $("intro-hint").hidden = true;
-});
+$("dismiss-hint").addEventListener("click", hideHint);
 
 function setConnection(connected, label) {
   online = connected;
@@ -336,7 +344,8 @@ function connect() {
       return;
     }
     if (message.type === "welcome") {
-      if (!Array.isArray(message.blocks) || !Array.isArray(message.signals)) {
+      // A server from another prototype version cannot share this world.
+      if (message.worldVersion !== WORLD_VERSION) {
         serverNeedsRestart = true;
         setConnection(false, "restart server");
         toast("Restart the Fractical server, then reload this page.", 15000);
@@ -419,17 +428,13 @@ function connect() {
       renderBlocks();
       updateCounts();
       if (pendingBuild && message.requestId === pendingBuild) {
-        clearTimeout(buildTimer);
-        pendingBuild = null;
+        settleBuild();
         $("build-status").textContent =
           "Saved. Everyone in the expedition can see it.";
       }
     } else if (message.type === "error") {
       toast(message.message, 5500);
-      if (message.requestId === pendingBuild) {
-        clearTimeout(buildTimer);
-        pendingBuild = null;
-      }
+      if (message.requestId === pendingBuild) settleBuild();
     } else if (message.type === "pong")
       $("latency").textContent =
         `${Math.max(1, Math.round((performance.now() - message.at) / 2))}ms`;
@@ -441,8 +446,7 @@ function connect() {
     updateCounts();
     stopFollowing();
     if (pendingBuild) {
-      clearTimeout(buildTimer);
-      pendingBuild = null;
+      settleBuild();
       toast(
         "Disconnected before the edit was confirmed. Reconnect to check your blocks.",
       );
@@ -483,14 +487,14 @@ function syncPlayers(players) {
       renderHeading: existing?.renderHeading ?? player.heading,
     });
   }
-  const previous = [...others.values()]
-    .map((p) => `${p.id}:${p.name}:${p.depth.toFixed(1)}:${p.color}`)
-    .join("|");
+  // Rebuild the people list only when a listed detail changes.
+  const listed = () =>
+    [...others.values()]
+      .map((p) => `${p.id}:${p.name}:${p.depth.toFixed(1)}:${p.color}`)
+      .join("|");
+  const previous = listed();
   others = next;
-  const current = [...others.values()]
-    .map((p) => `${p.id}:${p.name}:${p.depth.toFixed(1)}:${p.color}`)
-    .join("|");
-  if (previous !== current) renderPeople();
+  if (listed() !== previous) renderPeople();
   updateCounts();
 }
 function updateCounts() {
@@ -701,32 +705,28 @@ for (const [signal, text] of Object.entries(SIGNALS)) {
   button.addEventListener("click", () => sendSignal(signal));
   $("signal-options").append(button);
 }
-$("chat-toggle").addEventListener("click", () => {
-  const collapsed = !$("chat-body").hidden;
+function setChatCollapsed(collapsed) {
   $("chat-body").hidden = collapsed;
   $("chat-toggle").textContent = collapsed ? "+" : "−";
   $("chat-toggle").setAttribute(
     "aria-label",
     `${collapsed ? "Expand" : "Collapse"} field signals`,
   );
+}
+$("chat-toggle").addEventListener("click", () => {
+  const collapsed = !$("chat-body").hidden;
+  setChatCollapsed(collapsed);
   if (!collapsed) {
     unreadRadio = 0;
     document.querySelector(".conversation-heading strong").textContent =
       "Field signals";
-    if (innerWidth <= 700) $("intro-hint").hidden = true;
+    if (isPhone()) hideHint();
   }
 });
-if (innerWidth <= 700) {
-  $("chat-body").hidden = true;
-  $("chat-toggle").textContent = "+";
-  $("chat-toggle").setAttribute("aria-label", "Expand field signals");
-}
+if (isPhone()) setChatCollapsed(true);
 
 function openDialog(id) {
-  keys.clear();
-  destination = null;
-  me.moving = false;
-  touchVector = { x: 0, y: 0 };
+  haltMotion();
   $(id).showModal();
 }
 for (const button of document.querySelectorAll("[data-close]"))
@@ -815,12 +815,8 @@ function setBuildMode(mode) {
     destination = null;
     keys.clear();
     me.moving = false;
-    $("intro-hint").hidden = true;
-    if (innerWidth <= 700) {
-      $("chat-body").hidden = true;
-      $("chat-toggle").textContent = "+";
-      $("chat-toggle").setAttribute("aria-label", "Expand field signals");
-    }
+    hideHint();
+    if (isPhone()) setChatCollapsed(true);
   }
   world.classList.toggle("building", Boolean(mode));
   $("build-banner").hidden = !mode;
@@ -833,7 +829,7 @@ function setBuildMode(mode) {
   $("build-status").textContent = mode
     ? "Tap to place. Drag your squares to move them. Their world size stays fixed."
     : "Build at your scale. B starts or finishes.";
-  if (mode && innerWidth <= 700)
+  if (mode && isPhone())
     document.querySelector(".fieldnotes").classList.remove("expanded");
   world.focus({ preventScroll: true });
 }
@@ -853,17 +849,8 @@ $("cycle-material").addEventListener("click", () => {
   setBuildMode("place");
 });
 function buildPoint() {
-  if (buildPointer) {
-    const span = spanAt(camera.depth);
-    return {
-      x:
-        camera.x +
-        ((buildPointer.x - entities.width / 2) / entities.height) * span,
-      y:
-        camera.y -
-        ((buildPointer.y - entities.height / 2) / entities.height) * span,
-    };
-  }
+  if (buildPointer)
+    return entities.worldAt(buildPointer.x, buildPointer.y, camera);
   const reach = blockSizeAt(Math.round(me.depth)) * 2.5;
   return {
     x: me.x + Math.sin(me.heading) * reach,
@@ -962,6 +949,10 @@ function editAt(point) {
   }
   commitBuildPreview(preview);
 }
+function settleBuild() {
+  clearTimeout(buildTimer);
+  pendingBuild = null;
+}
 function commitBuildPreview(preview) {
   if (pendingBuild || !preview?.cell) return;
   if (preview.problem) {
@@ -1008,7 +999,7 @@ function commitBuildPreview(preview) {
   pendingBuild = buildId;
   $("build-status").textContent = "Saving the edit…";
   buildTimer = setTimeout(() => {
-    pendingBuild = null;
+    settleBuild();
     toast(
       "The edit has not been confirmed. Check your blocks before trying again.",
       6000,
@@ -1061,6 +1052,9 @@ const movementKeys = [
   "e",
   "Shift",
 ];
+// Letter keys are case-insensitive, so Shift does not change their meaning.
+const keyName = (event) =>
+  event.key.length === 1 ? event.key.toLowerCase() : event.key;
 addEventListener("keydown", (event) => {
   if (
     event.defaultPrevented ||
@@ -1070,13 +1064,13 @@ addEventListener("keydown", (event) => {
     event.altKey
   )
     return;
-  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  const key = keyName(event);
   if (movementKeys.includes(key)) {
     event.preventDefault();
     keys.add(key);
     stopFollowing();
     if (!["e", "q", "Shift"].includes(key)) destination = null;
-    $("intro-hint").hidden = true;
+    hideHint();
   }
   if (!event.repeat && key === "b") {
     event.preventDefault();
@@ -1112,25 +1106,18 @@ addEventListener("keydown", (event) => {
   }
   if (!event.repeat && key === "?") openDialog("help-dialog");
 });
-addEventListener("keyup", (event) => {
-  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  keys.delete(key);
-});
-addEventListener("blur", () => {
+addEventListener("keyup", (event) => keys.delete(keyName(event)));
+// Losing focus drops held keys, the touch pad, and a square being moved.
+function releaseInput() {
   cancelBlockMove();
   keys.clear();
   touchVector = { x: 0, y: 0 };
   me.moving = false;
   sendPosition(true);
-});
+}
+addEventListener("blur", releaseInput);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    cancelBlockMove();
-    keys.clear();
-    touchVector = { x: 0, y: 0 };
-    me.moving = false;
-    sendPosition(true);
-  }
+  if (document.hidden) releaseInput();
   lastFrame = performance.now();
 });
 function changeDepth(amount) {
@@ -1141,7 +1128,7 @@ function changeDepth(amount) {
     contactState = "grow";
     contactUntil = performance.now() + 1000;
   }
-  $("intro-hint").hidden = true;
+  hideHint();
   sendPosition();
 }
 $("ascend-button").addEventListener("click", () => changeDepth(-0.8));
@@ -1234,7 +1221,7 @@ world.addEventListener("pointerup", (event) => {
   if (hit?.kind === "passage") {
     stopFollowing();
     destination = { x: hit.value.x, y: hit.value.y };
-    $("intro-hint").hidden = true;
+    hideHint();
     world.focus({ preventScroll: true });
     return;
   }
@@ -1246,13 +1233,9 @@ world.addEventListener("pointerup", (event) => {
     return;
   }
   stopFollowing();
-  $("intro-hint").hidden = true;
+  hideHint();
   world.focus({ preventScroll: true });
-  const span = spanAt(camera.depth);
-  destination = {
-    x: clamp(camera.x + ((x - rect.width / 2) / rect.height) * span, -3, 3),
-    y: clamp(camera.y - ((y - rect.height / 2) / rect.height) * span, -2, 2),
-  };
+  destination = clampToWorld(entities.worldAt(x, y, camera));
 });
 for (const event of ["pointercancel", "lostpointercapture"])
   world.addEventListener(event, (event) => {
@@ -1263,22 +1246,12 @@ world.addEventListener("dblclick", (event) => {
   if (buildMode) return;
   if (event.target !== world && event.target.tagName !== "CANVAS") return;
   const rect = world.getBoundingClientRect(),
-    span = spanAt(camera.depth);
-  if (entities.hit(event.clientX - rect.left, event.clientY - rect.top)) return;
-  const x = clamp(
-    camera.x +
-      ((event.clientX - rect.left - rect.width / 2) / rect.height) * span,
-    -3,
-    3,
-  );
-  const y = clamp(
-    camera.y -
-      ((event.clientY - rect.top - rect.height / 2) / rect.height) * span,
-    -2,
-    2,
-  );
+    x = event.clientX - rect.left,
+    y = event.clientY - rect.top;
+  if (entities.hit(x, y)) return;
+  const target = clampToWorld(entities.worldAt(x, y, camera));
   changeDepth(1.4);
-  destination = { x, y };
+  destination = target;
 });
 const joystick = $("joystick");
 let joyCenter;
@@ -1311,7 +1284,7 @@ for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
     joyCenter = null;
     touchVector = { x: 0, y: 0 };
     joystick.firstElementChild.style.transform = "";
-    $("intro-hint").hidden = true;
+    hideHint();
   });
 $("sound-button").addEventListener("click", async () => {
   try {
@@ -1346,7 +1319,6 @@ function updateLabels() {
         : through
           ? "Inside the narrows. Try growing here."
           : "Solid rock. Your body needs room.";
-  $("ascend-button").title = "Grow only when your body has enough room";
   sound.depth(me.depth);
   if (buildMode) {
     const preview = buildPreview();
@@ -1410,17 +1382,11 @@ function frame(now) {
     if (followed) {
       const player = others.get(followed);
       if (player) {
-        const small = resizeBody(
+        const sized = approachBody(
           me,
-          Math.max(me.depth, player.renderDepth),
+          { x: player.renderX, y: player.renderY, depth: player.renderDepth },
           collider,
         );
-        const moved = moveBody(
-          small,
-          { x: player.renderX - me.x, y: player.renderY - me.y },
-          collider,
-        );
-        const sized = resizeBody(moved, player.renderDepth, collider);
         Object.assign(me, motionBetween(me, sized), {
           x: sized.x,
           y: sized.y,

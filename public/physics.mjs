@@ -1,4 +1,11 @@
-import { MAX_DEPTH, clamp, spanAt, validPosition } from "./world.mjs";
+import {
+  MAX_DEPTH,
+  boundsAround,
+  clamp,
+  insideWorld,
+  spanAt,
+  validPosition,
+} from "./world.mjs";
 
 // Geometry uses one iteration budget at every scale. Rendering and collisions
 // share this value, so changing size does not change which set defines rock.
@@ -7,12 +14,30 @@ export const BODY_FRACTION = 0.018;
 export const bodyRadiusAt = (depth) => spanAt(depth) * BODY_FRACTION;
 export const PASSAGE = Object.freeze({ x: -0.7515, y: 0.04, depth: 7 });
 
+// Points in the main cardioid or the period-2 bulb never escape.
+function inMainBulbs(x, y) {
+  const q = (x - 0.25) ** 2 + y * y;
+  return q * (q + x - 0.25) <= 0.25 * y * y || (x + 1) ** 2 + y * y <= 0.0625;
+}
+
+export function escapeIterations(x, y, max = TERRAIN_ITERATIONS) {
+  if (inMainBulbs(x, y)) return max;
+  let zx = 0,
+    zy = 0;
+  for (let i = 0; i < max; i++) {
+    const next = zx * zx - zy * zy + x;
+    zy = 2 * zx * zy + y;
+    zx = next;
+    if (zx * zx + zy * zy > 256)
+      return i + 1 - Math.log2(Math.log2(Math.sqrt(zx * zx + zy * zy)));
+  }
+  return max;
+}
+
 // The exterior distance estimate is used to generate conservative static cells,
 // not as an exact signed distance function or a contact normal.
 export function fractalClearance(x, y) {
-  const q = (x - 0.25) ** 2 + y * y;
-  if (q * (q + x - 0.25) <= 0.25 * y * y || (x + 1) ** 2 + y * y <= 0.0625)
-    return 0;
+  if (inMainBulbs(x, y)) return 0;
   let zx = 0,
     zy = 0,
     dx = 0,
@@ -62,15 +87,7 @@ export class FractalCollider {
     const solid =
       parentSolid &&
       this.clearance(minX + size / 2, minY + size / 2) <= size * Math.SQRT1_2;
-    const cell = {
-      id: key,
-      type: "static",
-      minX,
-      minY,
-      maxX: minX + size,
-      maxY: minY + size,
-      solid,
-    };
+    const cell = { minX, minY, maxX: minX + size, maxY: minY + size, solid };
     this.cells.set(key, cell);
     if (this.cells.size > this.maxCells) {
       const oldest = this.cells.keys();
@@ -79,38 +96,21 @@ export class FractalCollider {
     }
     return cell;
   }
-  contacts(body, limit = 1) {
-    if (!validPosition(body)) return [{ type: "bounds" }];
+  fits(body) {
+    if (!validPosition(body)) return false;
     const radius = bodyRadiusAt(body.depth);
-    if (
-      body.x - radius < -3 ||
-      body.x + radius > 3 ||
-      body.y - radius < -2 ||
-      body.y + radius > 2
-    )
-      return [{ type: "bounds" }];
-    return this.query(
-      {
-        minX: body.x - radius,
-        maxX: body.x + radius,
-        minY: body.y - radius,
-        maxY: body.y + radius,
-      },
-      body.depth,
-      (cell) => overlapsCircle(body, radius, cell),
-      limit,
+    const bounds = boundsAround(body, radius);
+    return (
+      insideWorld(bounds) &&
+      !this.intersectsSolid(bounds, body.depth, (cell) =>
+        overlapsCircle(body, radius, cell),
+      )
     );
   }
   rectangleFits(bounds, depth) {
-    if (
-      bounds.minX < -3 ||
-      bounds.maxX > 3 ||
-      bounds.minY < -2 ||
-      bounds.maxY > 2
-    )
-      return false;
     return (
-      this.query(
+      insideWorld(bounds) &&
+      !this.intersectsSolid(
         bounds,
         depth,
         (cell) =>
@@ -118,22 +118,21 @@ export class FractalCollider {
           bounds.maxX > cell.minX &&
           bounds.minY < cell.maxY &&
           bounds.maxY > cell.minY,
-      ).length === 0
+      )
     );
   }
-  query(bounds, depth, intersects, limit = 1) {
+  // Whether a solid cell at the collision level for this depth intersects.
+  // Only solid parents that intersect are refined.
+  intersectsSolid(bounds, depth, intersects) {
     const level = Math.ceil(depth) + 9;
-    const contacts = [];
     const visit = (at, ix, iy) => {
-      if (contacts.length >= limit) return;
       const cell = this.cell(at, ix, iy);
-      if (!cell.solid || !intersects(cell)) return;
-      if (at === level) {
-        contacts.push(cell);
-        return;
-      }
+      if (!cell.solid || !intersects(cell)) return false;
+      if (at === level) return true;
       for (let dy = 0; dy < 2; dy++)
-        for (let dx = 0; dx < 2; dx++) visit(at + 1, ix * 2 + dx, iy * 2 + dy);
+        for (let dx = 0; dx < 2; dx++)
+          if (visit(at + 1, ix * 2 + dx, iy * 2 + dy)) return true;
+      return false;
     };
     const rootSize = spanAt(0);
     for (
@@ -146,11 +145,8 @@ export class FractalCollider {
         ix <= Math.floor(bounds.maxX / rootSize);
         ix++
       )
-        visit(0, ix, iy);
-    return contacts;
-  }
-  fits(body) {
-    return this.contacts(body).length === 0;
+        if (visit(0, ix, iy)) return true;
+    return false;
   }
 }
 
@@ -213,6 +209,22 @@ export function moveBody(body, delta, collider) {
     }
   }
   return moved;
+}
+
+// Following uses ordinary collisions: take the smaller of the two bodies, walk
+// towards the target, then return to its size where the body fits.
+export function approachBody(body, target, collider) {
+  const smaller = resizeBody(
+    body,
+    Math.max(body.depth, target.depth),
+    collider,
+  );
+  const moved = moveBody(
+    smaller,
+    { x: target.x - body.x, y: target.y - body.y },
+    collider,
+  );
+  return resizeBody(moved, target.depth, collider);
 }
 
 export function findClearSpawn(position, collider) {

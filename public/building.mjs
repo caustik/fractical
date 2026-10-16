@@ -1,4 +1,4 @@
-import { MAX_DEPTH, spanAt, clamp } from "./world.mjs";
+import { MAX_DEPTH, spanAt, clamp, insideWorld } from "./world.mjs";
 import { FractalCollider, bodyRadiusAt } from "./physics.mjs";
 
 export const MATERIALS = Object.freeze({
@@ -48,8 +48,7 @@ export function validCell(cell) {
     cell.depth > MAX_DEPTH
   )
     return false;
-  const b = blockBounds(cell);
-  return b.minX >= -3 && b.maxX <= 3 && b.minY >= -2 && b.maxY <= 2;
+  return insideWorld(blockBounds(cell));
 }
 export function rectanglesOverlap(a, b) {
   const epsilon = Math.min(a.maxX - a.minX, b.maxX - b.minX) * 1e-8;
@@ -191,9 +190,9 @@ export function movementProblem(block, cell, player, players, blocks, terrain) {
       maxY: Math.max(from.maxY, to.maxY),
     };
   if (
-    terrain.query(sweep, block.depth, (rock) =>
+    terrain.intersectsSolid(sweep, block.depth, (rock) =>
       sweptRectangleOverlaps(from, to, rock),
-    ).length
+    )
   )
     return "The square's path crosses fractal rock.";
   if (
@@ -231,9 +230,8 @@ export class WorldCollider {
       this.levels.get(block.depth).set(`${block.ix}:${block.iy}`, block);
     }
   }
-  contacts(body, limit = 1) {
-    const contacts = this.terrain.contacts(body, limit);
-    if (contacts.length >= limit) return contacts;
+  fits(body) {
+    if (!this.terrain.fits(body)) return false;
     const radius = bodyRadiusAt(body.depth);
     for (const [depth, cells] of this.levels) {
       const size = blockSizeAt(depth);
@@ -241,27 +239,18 @@ export class WorldCollider {
         maxX = Math.floor((body.x + radius) / size);
       const minY = Math.floor((body.y - radius) / size),
         maxY = Math.floor((body.y + radius) / size);
-      const visit = (block) => {
-        if (block && bodyOverlapsBlock(body, block))
-          contacts.push({ type: "block", block });
-      };
       if ((maxX - minX + 1) * (maxY - minY + 1) > cells.size) {
-        for (const block of cells.values()) {
-          visit(block);
-          if (contacts.length >= limit) return contacts;
-        }
+        for (const block of cells.values())
+          if (bodyOverlapsBlock(body, block)) return false;
       } else {
         for (let iy = minY; iy <= maxY; iy++)
           for (let ix = minX; ix <= maxX; ix++) {
-            visit(cells.get(`${ix}:${iy}`));
-            if (contacts.length >= limit) return contacts;
+            const block = cells.get(`${ix}:${iy}`);
+            if (block && bodyOverlapsBlock(body, block)) return false;
           }
       }
     }
-    return contacts;
-  }
-  fits(body) {
-    return this.contacts(body).length === 0;
+    return true;
   }
 }
 

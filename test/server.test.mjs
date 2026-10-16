@@ -15,12 +15,15 @@ import { createFracticalServer } from "../server.mjs";
 import {
   HOME,
   MAX_DEPTH,
-  escapeIterations,
   readPosition,
   validPosition,
   WORLD_VERSION,
 } from "../public/world.mjs";
-import { FractalCollider, PASSAGE } from "../public/physics.mjs";
+import {
+  FractalCollider,
+  PASSAGE,
+  escapeIterations,
+} from "../public/physics.mjs";
 import { cellAt, WorldCollider, blockPosition } from "../public/building.mjs";
 
 const BUILD_HOME = { x: -2.5, y: 0.5, depth: 4 };
@@ -48,7 +51,7 @@ const moveSquare = (block, dx = 0, dy = 2, requestId = "move-square") => ({
 const buildCooldown = () => new Promise((resolve) => setTimeout(resolve, 140));
 
 const qaRoot = path.resolve(".qa");
-await (await import("node:fs/promises")).mkdir(qaRoot, { recursive: true });
+await mkdir(qaRoot, { recursive: true });
 async function removeOwnedQaDirectory(directory) {
   const target = path.resolve(directory);
   assert.ok(
@@ -510,9 +513,7 @@ test("a failed disk write never announces a block or leaves its reserved collide
   const a = await builder(app, "Ada"),
     b = await builder(app, "Lin");
   // A directory at the destination file makes the atomic rename fail without changing permissions.
-  await (
-    await import("node:fs/promises")
-  ).mkdir(path.join(dir, "test-expedition.json"));
+  await mkdir(path.join(dir, "test-expedition.json"));
   a.send({
     ...place(),
     requestId: "disk-error",
